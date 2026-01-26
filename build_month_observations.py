@@ -132,6 +132,7 @@ def build_database(
             ignore_errors=true
         )
         WHERE "ALL SPECIES REPORTED" = 1
+          AND "LOCALITY TYPE" = 'H'
         GROUP BY location_id, month
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
@@ -156,6 +157,7 @@ def build_database(
             ignore_errors=true
         )
         WHERE "ALL SPECIES REPORTED" = 1
+          AND "LOCALITY TYPE" = 'H'
           AND "CATEGORY" IN ('species', 'issf')
         GROUP BY location_id, month, scientific_name
     """)
@@ -197,6 +199,7 @@ def build_database(
             ignore_errors=true
         )
         WHERE "LOCALITY ID" IS NOT NULL
+          AND "LOCALITY TYPE" = 'H'
         GROUP BY "LOCALITY ID"
     """)
 

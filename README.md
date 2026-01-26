@@ -17,15 +17,14 @@ For large datasets (100+ GB), use memory and temp directory options:
 
 ```bash
 python3 build_month_observations.py species.tsv sampling.tsv ebird.db \
-    --memory-limit 64GB \
-    --temp-dir /fast-ssd/tmp \
-    --threads 16
+    --memory-limit 24GB \
+    --threads 8
 ```
 
 ## Output Schema
 
 ```sql
--- Locations from the dataset
+-- Hotspot locations from the dataset
 CREATE TABLE location (
     location_id TEXT PRIMARY KEY,
     name TEXT,
@@ -62,6 +61,7 @@ ORDER BY chance_pct DESC;
 
 ## Notes
 
+- Only includes hotspot locations (`LOCALITY TYPE = H`)
 - Only includes complete checklists (`ALL SPECIES REPORTED = 1`)
 - Group checklists are deduplicated (multiple observers = 1 sampling)
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
