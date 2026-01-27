@@ -30,6 +30,9 @@ REQUIRED_COLUMNS = [
 # Columns used for filtering (not included in output)
 FILTER_COLUMNS = ["ALL SPECIES REPORTED", "CATEGORY", "LOCALITY TYPE"]
 
+# Valid category values (set for O(1) lookup)
+VALID_CATEGORIES = frozenset(("species", "issf"))
+
 
 def format_size(bytes_count: int) -> str:
     """Format bytes as human-readable size."""
@@ -104,27 +107,17 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
 
         # Process data rows
         for line_bytes in proc.stdout:
-            line = line_bytes.decode("utf-8", errors="replace")
-            cols = line.rstrip("\n").split("\t")
+            cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Skip incomplete checklists
-            if cols[all_species_idx] != "1":
-                rows_skipped += 1
-                continue
-
-            # Skip non-species (hybrids, slashes, etc.)
-            if cols[category_idx] not in ("species", "issf"):
-                rows_skipped += 1
-                continue
-
-            # Skip non-hotspot locations
-            if cols[locality_type_idx] != "H":
+            # Filter: complete checklists, hotspots only, species/issf only
+            if (cols[all_species_idx] != "1" or
+                cols[locality_type_idx] != "H" or
+                cols[category_idx] not in VALID_CATEGORIES):
                 rows_skipped += 1
                 continue
 
             # Extract only required columns
-            out_cols = [cols[i] for i in col_indices]
-            outfile.write("\t".join(out_cols) + "\n")
+            outfile.write("\t".join(cols[i] for i in col_indices) + "\n")
             rows_processed += 1
 
             # Progress update every 1 million rows
