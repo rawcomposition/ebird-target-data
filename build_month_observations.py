@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Build month_observations SQLite database from eBird Basic Dataset.
+Build month_obs SQLite database from eBird Basic Dataset.
 
 Uses DuckDB to efficiently process large TSV files (100+ GB) without loading
 them entirely into memory.
 
 Usage:
-    python build_month_observations.py <species_file> <output.db>
+    python build_month_obs.py <species_file> <output.db>
 
 Example:
-    python build_month_observations.py ebd_relMar-2025.txt ebird.db
+    python build_month_obs.py ebd_relMar-2025.txt ebird.db
 
 For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
@@ -49,7 +49,7 @@ def build_database(
     threads: Optional[int] = None,
 ) -> None:
     """
-    Build the month_observations database from eBird species file.
+    Build the month_obs database from eBird species file.
     """
     start_time = time.time()
 
@@ -82,27 +82,27 @@ def build_database(
     con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
 
     # Create table in SQLite (drop existing if re-running)
-    con.execute("DROP TABLE IF EXISTS sqlite_db.month_observations")
+    con.execute("DROP TABLE IF EXISTS sqlite_db.month_obs")
 
     con.execute("""
-        CREATE TABLE sqlite_db.month_observations (
+        CREATE TABLE sqlite_db.month_obs (
             location_id TEXT NOT NULL,
             month INTEGER NOT NULL,
             scientific_name TEXT NOT NULL,
-            observations INTEGER NOT NULL,
-            samplings INTEGER NOT NULL
+            obs INTEGER NOT NULL,
+            samples INTEGER NOT NULL
         )
     """)
 
-    # Step 1: Calculate samplings per (location, month)
-    print("\nStep 1/4: Calculating samplings per location/month...")
+    # Step 1: Calculate samples per (location, month)
+    print("\nStep 1/4: Calculating samples per location/month...")
     step_start = time.time()
     con.execute(f"""
-        CREATE TEMP TABLE samplings_agg AS
+        CREATE TEMP TABLE samples_agg AS
         SELECT
             "LOCALITY ID" AS location_id,
             EXTRACT(MONTH FROM CAST("OBSERVATION DATE" AS DATE)) AS month,
-            COUNT(DISTINCT COALESCE(NULLIF("GROUP IDENTIFIER", ''), "SAMPLING EVENT IDENTIFIER")) AS samplings
+            COUNT(DISTINCT COALESCE(NULLIF("GROUP IDENTIFIER", ''), "SAMPLING EVENT IDENTIFIER")) AS samples
         FROM read_csv(
             '{species_file}',
             delim='\t',
@@ -114,7 +114,7 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 2: Calculate observations and join with samplings
+    # Step 2: Calculate observations and join with samples
     print("\nStep 2/4: Calculating observations...")
     step_start = time.time()
     con.execute(f"""
@@ -123,14 +123,14 @@ def build_database(
             o.location_id,
             o.month,
             o.scientific_name,
-            o.observations,
-            s.samplings
+            o.obs,
+            s.samples
         FROM (
             SELECT
                 "LOCALITY ID" AS location_id,
                 EXTRACT(MONTH FROM CAST("OBSERVATION DATE" AS DATE)) AS month,
                 "SCIENTIFIC NAME" AS scientific_name,
-                COUNT(DISTINCT COALESCE(NULLIF("GROUP IDENTIFIER", ''), "SAMPLING EVENT IDENTIFIER")) AS observations
+                COUNT(DISTINCT COALESCE(NULLIF("GROUP IDENTIFIER", ''), "SAMPLING EVENT IDENTIFIER")) AS obs
             FROM read_csv(
                 '{species_file}',
                 delim='\t',
@@ -140,7 +140,7 @@ def build_database(
             )
             GROUP BY location_id, month, scientific_name
         ) o
-        JOIN samplings_agg s
+        JOIN samples_agg s
             ON o.location_id = s.location_id
             AND o.month = s.month
     """)
@@ -153,23 +153,23 @@ def build_database(
     for month in range(1, 13):
         month_start = time.time()
         con.execute(f"""
-            INSERT INTO sqlite_db.month_observations
+            INSERT INTO sqlite_db.month_obs
             SELECT * FROM observations_agg WHERE month = {month}
         """)
-        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_observations WHERE month = {month}").fetchone()[0]
+        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs WHERE month = {month}").fetchone()[0]
         total_rows += month_count
         if month_count > 0:
             print(f"  Month {month:2d}: {month_count:,} rows ({format_duration(time.time() - month_start)})")
     print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
 
     # Print summary statistics from DuckDB before closing
-    result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_observations").fetchone()
+    result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs").fetchone()
     obs_count = result[0]
 
-    result = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_observations").fetchone()
+    result = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs").fetchone()
     loc_count = result[0]
 
-    result = con.execute("SELECT COUNT(DISTINCT scientific_name) FROM sqlite_db.month_observations").fetchone()
+    result = con.execute("SELECT COUNT(DISTINCT scientific_name) FROM sqlite_db.month_obs").fetchone()
     species_count = result[0]
 
     con.close()
@@ -178,9 +178,9 @@ def build_database(
     print("\nStep 4/4: Creating indexes...")
     step_start = time.time()
     sqlite_con = sqlite3.connect(output_db)
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_observations(location_id, month, scientific_name)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_species ON month_observations(scientific_name)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_month ON month_observations(month)")
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, scientific_name)")
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_species ON month_obs(scientific_name)")
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_month ON month_obs(month)")
     sqlite_con.commit()
     sqlite_con.close()
     print(f"  Done ({format_duration(time.time() - step_start)})")
@@ -189,7 +189,7 @@ def build_database(
     total_time = time.time() - start_time
     print("\n" + "=" * 50)
     print("Summary:")
-    print(f"  Total month_observations rows: {obs_count:,}")
+    print(f"  Total month_obs rows: {obs_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")
     print(f"  Total time: {format_duration(total_time)}")
@@ -198,15 +198,15 @@ def build_database(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build month_observations SQLite database from eBird data.",
+        description="Build month_obs SQLite database from eBird data.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic usage
-  python build_month_observations.py ebd_relDec-2025.txt output.db
+  python build_month_obs.py ebd_relDec-2025.txt output.db
 
   # Large dataset with memory and temp directory settings
-  python build_month_observations.py ebd_relDec-2025.txt output.db \\
+  python build_month_obs.py ebd_relDec-2025.txt output.db \\
       --memory-limit 24GB --threads 8
         """,
     )

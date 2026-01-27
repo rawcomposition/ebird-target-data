@@ -52,29 +52,44 @@ CREATE TABLE location (
 );
 
 -- Aggregated monthly observations
-CREATE TABLE month_observations (
+CREATE TABLE month_obs (
     location_id TEXT,
     month INTEGER,          -- 1-12
     scientific_name TEXT,
-    observations INTEGER,   -- times species was seen
-    samplings INTEGER       -- total checklists at location/month
+    obs INTEGER,            -- times species was seen
+    samples INTEGER         -- total checklists at location/month
 );
 ```
 
-## Example Query
+## Example Queries
+
+### Best locations to find a Red-headed Woodpecker (year-round)
 
 ```sql
--- Best locations to find a Red-headed Woodpecker in March
 SELECT
-    l.name,
-    m.observations,
-    m.samplings,
-    ROUND(100.0 * m.observations / m.samplings, 1) AS chance_pct
-FROM month_observations m
-JOIN location l ON m.location_id = l.location_id
+    m.location_id,
+    m.obs,
+    m.samples,
+    ROUND(100.0 * m.obs / m.samples, 1) AS chance_pct
+FROM month_obs m
 WHERE m.scientific_name = 'Melanerpes erythrocephalus'
   AND m.month = 3
-  AND m.samplings >= 5
+  AND m.samples >= 5
+ORDER BY chance_pct DESC;
+```
+
+### Best locations to find a Red-headed Woodpecker in March
+
+```sql
+SELECT
+  m.location_id,
+  m.obs,
+  m.samples,
+  ROUND(100.0 * m.obs / m.samples, 1) AS chance_pct
+FROM month_obs m
+WHERE m.scientific_name = 'Melanerpes erythrocephalus'
+  AND m.month = 3
+  AND m.samples >= 5
 ORDER BY chance_pct DESC;
 ```
 
