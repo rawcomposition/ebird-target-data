@@ -263,7 +263,7 @@ def build_database(
         CREATE TABLE sqlite_db.month_obs (
             location_id TEXT NOT NULL,
             month INTEGER NOT NULL,
-            species_id INTEGER NOT NULL REFERENCES species(id),
+            species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
             samples INTEGER NOT NULL
         )

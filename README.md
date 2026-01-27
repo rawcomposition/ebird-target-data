@@ -5,8 +5,8 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 ## Requirements
 
 - Python 3.8+
-- DuckDB: `pip install duckdb`
-- Requests: `pip install requests`
+- DuckDB: `python3 -m pip install duckdb`
+- Requests: `python3 -m pip install requests`
 - aria2c (for downloading): `brew install aria2`
 - pigz (for fast decompression): `brew install pigz`
 
@@ -81,7 +81,7 @@ CREATE TABLE hotspots (
 CREATE TABLE month_obs (
     location_id TEXT NOT NULL,
     month INTEGER NOT NULL,       -- 1-12
-    species_id INTEGER NOT NULL REFERENCES species(id),
+    species_id INTEGER NOT NULL,
     obs INTEGER NOT NULL,         -- Times species was seen
     samples INTEGER NOT NULL      -- Total checklists at location/month
 );
