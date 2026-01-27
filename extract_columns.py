@@ -22,16 +22,16 @@ from pathlib import Path
 REQUIRED_COLUMNS = [
     "LOCALITY ID",
     "LOCALITY",
-    "LOCALITY TYPE",
     "LATITUDE",
     "LONGITUDE",
     "OBSERVATION DATE",
     "SAMPLING EVENT IDENTIFIER",
-    "ALL SPECIES REPORTED",
     "GROUP IDENTIFIER",
-    "CATEGORY",
     "SCIENTIFIC NAME",
 ]
+
+# Columns used for filtering (not included in output)
+FILTER_COLUMNS = ["ALL SPECIES REPORTED", "CATEGORY", "LOCALITY TYPE"]
 
 
 def format_size(bytes_count: int) -> str:
@@ -97,8 +97,10 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
             proc.terminate()
             sys.exit(1)
 
-        # Find index of ALL SPECIES REPORTED for filtering
+        # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
+        category_idx = header_cols.index("CATEGORY")
+        locality_type_idx = header_cols.index("LOCALITY TYPE")
 
         # Write header
         outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
@@ -110,6 +112,16 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
 
             # Skip incomplete checklists
             if cols[all_species_idx] != "1":
+                rows_skipped += 1
+                continue
+
+            # Skip non-species (hybrids, slashes, etc.)
+            if cols[category_idx] not in ("species", "issf"):
+                rows_skipped += 1
+                continue
+
+            # Skip non-hotspot locations
+            if cols[locality_type_idx] != "H":
                 rows_skipped += 1
                 continue
 

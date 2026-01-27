@@ -111,7 +111,7 @@ def build_database(
 
     # Step 1: Calculate samplings per (location, month)
     # A sampling is a unique checklist, but GROUP_IDENTIFIER links shared checklists
-    # that should only count once. Only include ALL_SPECIES_REPORTED = 1.
+    # that should only count once.
     print("\nStep 1/5: Calculating samplings per location/month...")
     step_start = time.time()
     con.execute(f"""
@@ -128,14 +128,12 @@ def build_database(
             quote='',
             ignore_errors=true
         )
-        WHERE "ALL SPECIES REPORTED" = 1
-          AND "LOCALITY TYPE" = 'H'
         GROUP BY location_id, month
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
     # Step 2: Calculate observations per (location, month, species)
-    # Only count species/issf categories, deduplicate by GROUP_IDENTIFIER
+    # Deduplicate by GROUP_IDENTIFIER
     print("\nStep 2/5: Calculating observations per location/month/species...")
     step_start = time.time()
     con.execute(f"""
@@ -153,9 +151,6 @@ def build_database(
             quote='',
             ignore_errors=true
         )
-        WHERE "ALL SPECIES REPORTED" = 1
-          AND "LOCALITY TYPE" = 'H'
-          AND "CATEGORY" IN ('species', 'issf')
         GROUP BY location_id, month, scientific_name
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
@@ -196,7 +191,6 @@ def build_database(
             ignore_errors=true
         )
         WHERE "LOCALITY ID" IS NOT NULL
-          AND "LOCALITY TYPE" = 'H'
         GROUP BY "LOCALITY ID"
     """)
 
