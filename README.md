@@ -1,6 +1,6 @@
-# eBird Month Observations Builder
+# eBird Target Species Aggregator
 
-Builds a SQLite database of bird observation statistics from eBird Basic Dataset files.
+Builds a SQLite database of bird observation statistics from eBird Basic Dataset files. It allows querying for the best hotspots to find a given species, or the most likely species at a given hotspot.
 
 ## Requirements
 
