@@ -7,6 +7,7 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 - Python 3.8+
 - DuckDB: `pip install duckdb`
 - aria2c (for downloading): `brew install aria2`
+- pigz (for decompressing): `brew install pigz`
 
 ## Download eBird Data
 
@@ -19,25 +20,25 @@ caffeinate -dimsu aria2c -d ~/Downloads -c -x 2 -s 2 -j 1 --retry-wait=30 --max-
 
 ## Extract the archive
 
-Run `tar -xvf ebd_relDec-2025.tar` or double click to extract (Mac).
+1. run `caffeinate -i tar -xf ~/Downloads/ebd_relDec-2025.tar -C ~/Downloads`
+2. Run `pigz -dk ~/Downloads/ebd_relDec-2025.txt.gz`
 
 The `-x 2 -s 2 -j 1` flags enable 2 parallel connections for faster downloads.
 
-After extraction, you'll have two main files:
+After extraction, you only need the main species file:
 
-- `ebd_relDec-2025.txt` - Species observations (the large one)
-- `ebd_sampling_relDec-2025.txt` - Sampling events/checklists
+- `ebd_relDec-2025.txt` - Species observations (~200GB)
 
 ## Usage
 
 ```bash
-python3 build_month_observations.py <species_file.tsv> <sampling_file.tsv> <output.db>
+python3 build_month_observations.py <species_file> <output.db>
 ```
 
-For large datasets (100+ GB), use memory and temp directory options:
+For large datasets (100+ GB), use memory and thread options:
 
 ```bash
-python3 build_month_observations.py species.tsv sampling.tsv ebird.db \
+python3 build_month_observations.py ebd_relDec-2025.txt ebird.db \
     --memory-limit 24GB \
     --threads 8
 ```

@@ -6,10 +6,10 @@ Uses DuckDB to efficiently process large TSV files (100+ GB) without loading
 them entirely into memory.
 
 Usage:
-    python build_month_observations.py <species_file.tsv> <sampling_file.tsv> <output.db>
+    python build_month_observations.py <species_file> <output.db>
 
 Example:
-    python build_month_observations.py ebd_relMar-2025.tsv ebd_sampling_relMar-2025.tsv ebird.db
+    python build_month_observations.py ebd_relMar-2025.txt ebird.db
 
 For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
@@ -43,18 +43,16 @@ def format_duration(seconds: float) -> str:
 
 def build_database(
     species_file: Path,
-    sampling_file: Path,
     output_db: Path,
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
 ) -> None:
     """
-    Build the month_observations database from eBird TSV files.
+    Build the month_observations database from eBird species file.
 
     Args:
-        species_file: Path to the species observations TSV
-        sampling_file: Path to the sampling events TSV
+        species_file: Path to the species observations TSV/TXT file
         output_db: Path to output SQLite database
         temp_dir: Directory for DuckDB temporary files (for large datasets)
         memory_limit: Memory limit for DuckDB (e.g., "32GB", "80%")
@@ -79,7 +77,6 @@ def build_database(
     con.execute("INSTALL sqlite; LOAD sqlite;")
 
     print(f"Processing species file: {species_file}")
-    print(f"Processing sampling file: {sampling_file}")
     print(f"Output database: {output_db}")
     if temp_dir:
         print(f"Temp directory: {temp_dir}")
@@ -181,7 +178,7 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 4: Build location table from sampling file
+    # Step 4: Build location table from species file
     print("\nStep 4/5: Building location table...")
     step_start = time.time()
     con.execute(f"""
@@ -192,7 +189,7 @@ def build_database(
             FIRST("LATITUDE") AS latitude,
             FIRST("LONGITUDE") AS longitude
         FROM read_csv(
-            '{sampling_file}',
+            '{species_file}',
             delim='\t',
             header=true,
             quote='',
@@ -250,23 +247,18 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage with sample data
-  python build_month_observations.py species.tsv sampling.tsv output.db
+  # Basic usage
+  python build_month_observations.py ebd_relDec-2025.txt output.db
 
   # Large dataset with memory and temp directory settings
-  python build_month_observations.py species.tsv sampling.tsv output.db \\
-      --memory-limit 64GB --temp-dir /fast-ssd/tmp --threads 16
+  python build_month_observations.py ebd_relDec-2025.txt output.db \\
+      --memory-limit 24GB --threads 8
         """,
     )
     parser.add_argument(
         "species_file",
         type=Path,
-        help="Path to species observations TSV file",
-    )
-    parser.add_argument(
-        "sampling_file",
-        type=Path,
-        help="Path to sampling events TSV file",
+        help="Path to species observations file (TSV/TXT)",
     )
     parser.add_argument(
         "output_db",
@@ -291,12 +283,9 @@ Examples:
 
     args = parser.parse_args()
 
-    # Validate input files exist
+    # Validate input file exists
     if not args.species_file.exists():
         print(f"Error: Species file not found: {args.species_file}", file=sys.stderr)
-        sys.exit(1)
-    if not args.sampling_file.exists():
-        print(f"Error: Sampling file not found: {args.sampling_file}", file=sys.stderr)
         sys.exit(1)
 
     # Validate temp directory if specified
@@ -306,7 +295,6 @@ Examples:
 
     build_database(
         args.species_file,
-        args.sampling_file,
         args.output_db,
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,
