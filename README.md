@@ -7,6 +7,7 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 - Python 3.8+
 - DuckDB: `pip install duckdb`
 - aria2c (for downloading): `brew install aria2`
+- pigz (for fast decompression): `brew install pigz`
 
 ## Download eBird Data
 

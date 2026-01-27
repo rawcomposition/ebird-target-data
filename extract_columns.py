@@ -13,8 +13,7 @@ Example:
 """
 
 import argparse
-import csv
-import gzip
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,67 +61,88 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     """
     Stream through gzipped input and write filtered TSV output.
 
+    Uses pigz for parallel decompression and simple string splitting
+    for faster parsing.
+
     Args:
         input_file: Path to gzipped eBird species file
         output_file: Path to output TSV file
     """
     start_time = time.time()
     rows_processed = 0
-    bytes_read = 0
+    rows_skipped = 0
 
     print(f"Input: {input_file}")
     print(f"Output: {output_file}")
     print(f"Extracting columns: {', '.join(REQUIRED_COLUMNS)}")
     print()
 
-    with gzip.open(input_file, "rt", encoding="utf-8", errors="replace") as infile:
-        with open(output_file, "w", newline="", encoding="utf-8") as outfile:
-            reader = csv.DictReader(infile, delimiter="\t", quoting=csv.QUOTE_NONE)
+    # Use pigz for parallel decompression (much faster than Python's gzip)
+    proc = subprocess.Popen(
+        ["pigz", "-dc", str(input_file)],
+        stdout=subprocess.PIPE,
+        bufsize=1024 * 1024,  # 1MB buffer
+    )
 
-            # Verify all required columns exist
-            missing = set(REQUIRED_COLUMNS) - set(reader.fieldnames or [])
-            if missing:
-                print(f"Error: Missing columns: {missing}", file=sys.stderr)
-                sys.exit(1)
+    with open(output_file, "w", encoding="utf-8") as outfile:
+        # Read and parse header line
+        header_line = proc.stdout.readline().decode("utf-8", errors="replace")
+        header_cols = header_line.rstrip("\n").split("\t")
 
-            writer = csv.DictWriter(
-                outfile,
-                fieldnames=REQUIRED_COLUMNS,
-                delimiter="\t",
-                extrasaction="ignore",
-                quoting=csv.QUOTE_NONE,
-                quotechar=None,
-                escapechar=None,
-            )
-            writer.writeheader()
+        # Build index mapping for required columns
+        try:
+            col_indices = [header_cols.index(col) for col in REQUIRED_COLUMNS]
+        except ValueError as e:
+            print(f"Error: Missing column in input file: {e}", file=sys.stderr)
+            proc.terminate()
+            sys.exit(1)
 
-            for row in reader:
-                # Skip incomplete checklists
-                if row["ALL SPECIES REPORTED"] != "1":
-                    continue
+        # Find index of ALL SPECIES REPORTED for filtering
+        all_species_idx = header_cols.index("ALL SPECIES REPORTED")
 
-                writer.writerow({col: row[col] for col in REQUIRED_COLUMNS})
-                rows_processed += 1
+        # Write header
+        outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
 
-                # Progress update every 1 million rows
-                if rows_processed % 1_000_000 == 0:
-                    elapsed = time.time() - start_time
-                    rate = rows_processed / elapsed
-                    print(
-                        f"  Processed {rows_processed:,} rows "
-                        f"({format_duration(elapsed)}, {rate:,.0f} rows/sec)"
-                    )
+        # Process data rows
+        for line_bytes in proc.stdout:
+            line = line_bytes.decode("utf-8", errors="replace")
+            cols = line.rstrip("\n").split("\t")
+
+            # Skip incomplete checklists
+            if cols[all_species_idx] != "1":
+                rows_skipped += 1
+                continue
+
+            # Extract only required columns
+            out_cols = [cols[i] for i in col_indices]
+            outfile.write("\t".join(out_cols) + "\n")
+            rows_processed += 1
+
+            # Progress update every 1 million rows
+            if rows_processed % 1_000_000 == 0:
+                elapsed = time.time() - start_time
+                rate = rows_processed / elapsed
+                print(
+                    f"  Processed {rows_processed:,} rows "
+                    f"({format_duration(elapsed)}, {rate:,.0f} rows/sec)"
+                )
+
+    proc.wait()
 
     # Final stats
     elapsed = time.time() - start_time
     output_size = output_file.stat().st_size
+    total_rows = rows_processed + rows_skipped
 
     print()
     print("=" * 50)
-    print(f"Rows processed: {rows_processed:,}")
+    print(f"Total rows read: {total_rows:,}")
+    print(f"Rows written: {rows_processed:,}")
+    print(f"Rows skipped (incomplete checklists): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
-    print(f"Output written to: {output_file}")
+    print(f"Speed: {total_rows / elapsed:,.0f} rows/sec")
+    print(f"\nOutput written to: {output_file}")
 
 
 def main():
