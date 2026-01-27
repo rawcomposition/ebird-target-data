@@ -1,0 +1,82 @@
+#!/bin/bash
+#
+# Download and process the latest eBird Basic Dataset
+#
+# Usage:
+#   ./get-latest [output.db]
+#
+# Default output: ebird.db
+#
+
+set -e  # Exit on first error
+
+# Configuration
+OUTPUT_DB="${1:-ebird.db}"
+DOWNLOAD_DIR="$HOME/Downloads"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Get current month abbreviation and year for eBird release naming
+# eBird releases are named like: ebd_relDec-2025
+MONTH_ABBREV=$(date +%b)
+YEAR=$(date +%Y)
+RELEASE_NAME="ebd_rel${MONTH_ABBREV}-${YEAR}"
+
+TAR_FILE="${DOWNLOAD_DIR}/${RELEASE_NAME}.tar"
+TXT_GZ_FILE="${DOWNLOAD_DIR}/${RELEASE_NAME}.txt.gz"
+FILTERED_TSV="${SCRIPT_DIR}/ebd_filtered.tsv"
+
+echo "========================================"
+echo "eBird Data Pipeline"
+echo "========================================"
+echo "Release: ${RELEASE_NAME}"
+echo "Output:  ${OUTPUT_DB}"
+echo ""
+
+# Step 1: Download
+echo "Step 1/4: Downloading eBird Basic Dataset..."
+if [ -f "$TAR_FILE" ]; then
+    echo "  File already exists: ${TAR_FILE}"
+    echo "  Skipping download. Delete the file to re-download."
+else
+    caffeinate -dimsu aria2c \
+        -d "$DOWNLOAD_DIR" \
+        -c -x 2 -s 2 -j 1 \
+        --retry-wait=30 \
+        --max-tries=0 \
+        "https://download.ebird.org/ebd/prepackaged/${RELEASE_NAME}.tar"
+fi
+echo ""
+
+# Step 2: Extract archive
+echo "Step 2/4: Extracting archive..."
+if [ -f "$TXT_GZ_FILE" ]; then
+    echo "  File already exists: ${TXT_GZ_FILE}"
+    echo "  Skipping extraction. Delete the file to re-extract."
+else
+    caffeinate -i tar -xf "$TAR_FILE" -C "$DOWNLOAD_DIR"
+fi
+echo ""
+
+# Step 3: Extract columns
+echo "Step 3/4: Extracting required columns..."
+if [ -f "$FILTERED_TSV" ]; then
+    echo "  File already exists: ${FILTERED_TSV}"
+    echo "  Skipping column extraction. Delete the file to re-extract."
+else
+    caffeinate -dims python3 "${SCRIPT_DIR}/extract_columns.py" "$TXT_GZ_FILE" "$FILTERED_TSV"
+fi
+echo ""
+
+# Step 4: Build database
+echo "Step 4/4: Building database..."
+caffeinate -dims python3 "${SCRIPT_DIR}/build_month_observations.py" \
+    "$FILTERED_TSV" \
+    "$OUTPUT_DB" \
+    --memory-limit 24GB \
+    --threads 8
+
+echo ""
+echo "========================================"
+echo "Complete!"
+echo "Database: ${OUTPUT_DB}"
+echo "========================================"

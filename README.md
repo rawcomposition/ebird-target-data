@@ -20,7 +20,33 @@ EBIRD_API_KEY=your_api_key_here
 
 You can get an API key from https://ebird.org/api/keygen
 
-## Download eBird Data
+## Quick Start
+
+Run the all-in-one script to download and build the database:
+
+```bash
+./get-latest
+```
+
+This will:
+1. Download the latest eBird Basic Dataset for the current month
+2. Extract the archive
+3. Extract required columns
+4. Build the SQLite database
+
+The script skips steps where output files already exist. Delete intermediate files to re-run those steps.
+
+To specify a custom output database:
+
+```bash
+./get-latest my_ebird.db
+```
+
+## Manual Steps
+
+If you need to run steps individually:
+
+### Download eBird Data
 
 Download the eBird Basic Dataset using aria2c for fast parallel downloading:
 
@@ -29,13 +55,13 @@ Download the eBird Basic Dataset using aria2c for fast parallel downloading:
 caffeinate -dimsu aria2c -d ~/Downloads -c -x 2 -s 2 -j 1 --retry-wait=30 --max-tries=0 https://download.ebird.org/ebd/prepackaged/ebd_relDec-2025.tar
 ```
 
-## Extract the archive
+### Extract the archive
 
 ```bash
 caffeinate -i tar -xf ~/Downloads/ebd_relDec-2025.tar -C ~/Downloads
 ```
 
-## Extract required columns
+### Extract required columns
 
 Extract only the columns needed for processing. This streams from the gzipped file and creates a much smaller TSV:
 
@@ -43,7 +69,7 @@ Extract only the columns needed for processing. This streams from the gzipped fi
 caffeinate -dims python3 extract_columns.py ~/Downloads/ebd_relDec-2025.txt.gz ebd_filtered.tsv
 ```
 
-## Build the database
+### Build the database
 
 ```bash
 caffeinate -dims python3 build_month_observations.py ebd_filtered.tsv ebird.db \
