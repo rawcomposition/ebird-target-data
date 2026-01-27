@@ -73,7 +73,7 @@ caffeinate -dims python3 extract_columns.py ~/Downloads/ebd_relDec-2025.txt.gz e
 ### Build the database
 
 ```bash
-caffeinate -dims python3 build_month_observations.py ebd_filtered.tsv ebird.db \
+caffeinate -dims python3 generate_data.py ebd_filtered.tsv ebird.db \
     --memory-limit 24GB \
     --threads 8
 ```
@@ -112,6 +112,14 @@ CREATE TABLE month_obs (
     obs INTEGER NOT NULL,         -- Times species was seen
     samples INTEGER NOT NULL      -- Total checklists at location/month
 );
+
+-- Aggregated yearly observations (for faster year-round queries)
+CREATE TABLE year_obs (
+    location_id TEXT NOT NULL,
+    species_id INTEGER NOT NULL,
+    obs INTEGER NOT NULL,         -- Times species was seen (all months)
+    samples INTEGER NOT NULL      -- Total checklists at location (all months)
+);
 ```
 
 ## Example Queries
@@ -120,15 +128,14 @@ CREATE TABLE month_obs (
 
 ```sql
 SELECT
-    m.location_id,
-    SUM(m.obs) AS obs,
-    SUM(m.samples) AS samples,
-    ROUND(100.0 * (1.0*SUM(m.obs) / SUM(m.samples)), 1) AS chance_pct
-FROM month_obs m
-WHERE m.species_id = 1961
-GROUP BY m.location_id
-HAVING SUM(m.samples) >= 5
-ORDER BY (1.0*SUM(m.obs) / SUM(m.samples)) DESC
+    y.location_id,
+    y.obs,
+    y.samples,
+    ROUND(100.0 * y.obs / y.samples, 1) AS chance_pct
+FROM year_obs y
+WHERE y.species_id = 1961
+  AND y.samples >= 5
+ORDER BY chance_pct DESC
 LIMIT 200;
 ```
 
@@ -151,17 +158,16 @@ ORDER BY chance_pct DESC;
 
 ```sql
 SELECT
-    m.location_id,
-    SUM(m.obs) AS obs,
-    SUM(m.samples) AS samples,
-    ROUND(100.0 * (1.0*SUM(m.obs) / SUM(m.samples)), 1) AS chance_pct
-FROM month_obs m
-JOIN hotspots h ON h.id = m.location_id
-WHERE m.species_id = 1961
-    AND h.country_code = 'CA'
-GROUP BY m.location_id
-HAVING SUM(m.samples) >= 5
-ORDER BY (1.0*SUM(m.obs) / SUM(m.samples)) DESC
+    y.location_id,
+    y.obs,
+    y.samples,
+    ROUND(100.0 * y.obs / y.samples, 1) AS chance_pct
+FROM year_obs y
+JOIN hotspots h ON h.id = y.location_id
+WHERE y.species_id = 1961
+  AND h.country_code = 'CA'
+  AND y.samples >= 5
+ORDER BY chance_pct DESC
 LIMIT 200;
 ```
 

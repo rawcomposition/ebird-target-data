@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Build month_obs SQLite database from eBird Basic Dataset.
+Generate eBird observation statistics database.
 
 Uses DuckDB to efficiently process large TSV files (100+ GB) without loading
 them entirely into memory.
 
 Usage:
-    python build_month_obs.py <species_file> <output.db>
+    python generate_data.py <species_file> <output.db>
 
 Example:
-    python build_month_obs.py ebd_relMar-2025.txt ebird.db
+    python generate_data.py ebd_filtered.tsv ebird.db
 
 For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
     - Use --memory-limit to control DuckDB's memory usage (default: 80% of RAM)
     - Use --threads to control parallelism (default: all cores)
+    - Use --skip-api to skip taxonomy and hotspot downloads
 """
 
 import argparse
@@ -193,6 +194,7 @@ def build_database(
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
+    skip_api: bool = False,
 ) -> None:
     """
     Build the month_obs database from eBird species file.
@@ -200,11 +202,13 @@ def build_database(
     start_time = time.time()
 
     # Load API key from .env
-    env_vars = load_env_file()
-    api_key = env_vars.get("EBIRD_API_KEY") or os.environ.get("EBIRD_API_KEY")
+    api_key = None
+    if not skip_api:
+        env_vars = load_env_file()
+        api_key = env_vars.get("EBIRD_API_KEY") or os.environ.get("EBIRD_API_KEY")
 
-    if not api_key:
-        print("Warning: EBIRD_API_KEY not found in .env or environment. Skipping hotspots download.")
+        if not api_key:
+            print("Warning: EBIRD_API_KEY not found in .env or environment. Skipping hotspots download.")
 
     # Configure DuckDB for large file processing
     config = {}
@@ -231,27 +235,38 @@ def build_database(
     if threads:
         print(f"Threads: {threads}")
 
-    # Step 1: Download taxonomy (quick, no API key needed)
-    print("\nStep 1/6: Downloading eBird taxonomy...")
-    step_start = time.time()
-    sqlite_con = sqlite3.connect(output_db)
-    taxonomy_count = download_taxonomy(sqlite_con)
-    sqlite_con.close()
-    print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
+    # Determine number of steps based on skip_api
+    total_steps = 5 if skip_api else 7
+    step_num = 0
 
-    # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
+    # Step 1: Download taxonomy (quick, no API key needed)
     hotspot_result = {"count": 0, "error": None}
     hotspot_thread = None
-    if api_key:
-        print("\nStep 2/6: Starting hotspots download in background...")
-        hotspot_thread = Thread(
-            target=download_hotspots_background,
-            args=(api_key, output_db, hotspot_result),
-            daemon=True
-        )
-        hotspot_thread.start()
+    taxonomy_count = 0
+
+    if not skip_api:
+        step_num += 1
+        print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
+        step_start = time.time()
+        sqlite_con = sqlite3.connect(output_db)
+        taxonomy_count = download_taxonomy(sqlite_con)
+        sqlite_con.close()
+        print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
+
+        # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
+        step_num += 1
+        if api_key:
+            print(f"\nStep {step_num}/{total_steps}: Starting hotspots download in background...")
+            hotspot_thread = Thread(
+                target=download_hotspots_background,
+                args=(api_key, output_db, hotspot_result),
+                daemon=True
+            )
+            hotspot_thread.start()
+        else:
+            print(f"\nStep {step_num}/{total_steps}: Skipping hotspots download (no API key)")
     else:
-        print("\nStep 2/6: Skipping hotspots download (no API key)")
+        print("\nSkipping API steps (--skip-api specified)")
 
     # Attach SQLite database for output
     con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
@@ -270,7 +285,8 @@ def build_database(
     """)
 
     # Step 3: Calculate samples per (location, month)
-    print("\nStep 3/6: Calculating samples per location/month...")
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Calculating samples per location/month...")
     step_start = time.time()
     con.execute(f"""
         CREATE TEMP TABLE samples_agg AS
@@ -290,7 +306,8 @@ def build_database(
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
     # Step 4: Calculate observations and join with samples
-    print("\nStep 4/6: Calculating observations...")
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Calculating observations...")
     step_start = time.time()
     con.execute(f"""
         CREATE TEMP TABLE observations_agg AS
@@ -323,7 +340,8 @@ def build_database(
 
     # Step 5: Insert into SQLite by month for progress tracking
     # Join with species table to get species_id
-    print("\nStep 5/6: Inserting into SQLite...")
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Inserting month_obs into SQLite...")
     step_start = time.time()
     total_rows = 0
     for month in range(1, 13):
@@ -346,6 +364,35 @@ def build_database(
             print(f"  Month {month:2d}: {month_count:,} rows ({format_duration(time.time() - month_start)})")
     print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
 
+    # Step 6: Create and populate year_obs table
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Creating year_obs table...")
+    step_start = time.time()
+
+    con.execute("DROP TABLE IF EXISTS sqlite_db.year_obs")
+    con.execute("""
+        CREATE TABLE sqlite_db.year_obs (
+            location_id TEXT NOT NULL,
+            species_id INTEGER NOT NULL,
+            obs INTEGER NOT NULL,
+            samples INTEGER NOT NULL
+        )
+    """)
+
+    con.execute("""
+        INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples)
+        SELECT
+            location_id,
+            species_id,
+            SUM(obs) AS obs,
+            SUM(samples) AS samples
+        FROM sqlite_db.month_obs
+        GROUP BY location_id, species_id
+    """)
+
+    year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
+    print(f"  Created {year_obs_count:,} rows ({format_duration(time.time() - step_start)})")
+
     # Print summary statistics from DuckDB before closing
     result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs").fetchone()
     obs_count = result[0]
@@ -367,15 +414,22 @@ def build_database(
         else:
             print(f"  Hotspots download complete: {hotspot_result['count']:,} hotspots")
 
-    # Step 6: Create indexes using sqlite3
-    print("\nStep 6/6: Creating indexes...")
+    # Step 7: Create indexes using sqlite3
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Creating indexes...")
     step_start = time.time()
     sqlite_con = sqlite3.connect(output_db)
+    # month_obs indexes
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_mo_species_loc_month ON month_obs(species_id, location_id, month)")
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, species_id)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)")
+    # year_obs indexes
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_species_loc ON year_obs(species_id, location_id)")
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_loc_species ON year_obs(location_id, species_id)")
+    # hotspots indexes (only if not skipping API)
+    if not skip_api:
+        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)")
+        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)")
+        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)")
     sqlite_con.commit()
     sqlite_con.close()
     print(f"  Done ({format_duration(time.time() - step_start)})")
@@ -385,6 +439,7 @@ def build_database(
     print("\n" + "=" * 50)
     print("Summary:")
     print(f"  Total month_obs rows: {obs_count:,}")
+    print(f"  Total year_obs rows: {year_obs_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")
     print(f"  Hotspots: {hotspot_result['count']:,}")
@@ -394,16 +449,19 @@ def build_database(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Build month_obs SQLite database from eBird data.",
+        description="Generate eBird observation statistics database.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic usage
-  python build_month_obs.py ebd_relDec-2025.txt output.db
+  python generate_data.py ebd_filtered.tsv output.db
 
   # Large dataset with memory and temp directory settings
-  python build_month_obs.py ebd_relDec-2025.txt output.db \\
+  python generate_data.py ebd_filtered.tsv output.db \\
       --memory-limit 24GB --threads 8
+
+  # Skip API downloads (taxonomy and hotspots)
+  python generate_data.py ebd_filtered.tsv output.db --skip-api
         """,
     )
     parser.add_argument(
@@ -431,6 +489,11 @@ Examples:
         type=int,
         help="Number of threads for DuckDB (default: all cores)",
     )
+    parser.add_argument(
+        "--skip-api",
+        action="store_true",
+        help="Skip downloading taxonomy and hotspots from eBird API",
+    )
 
     args = parser.parse_args()
 
@@ -448,6 +511,7 @@ Examples:
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,
         threads=args.threads,
+        skip_api=args.skip_api,
     )
 
 
