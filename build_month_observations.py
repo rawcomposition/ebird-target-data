@@ -95,7 +95,7 @@ def build_database(
     """)
 
     # Step 1: Calculate samplings per (location, month)
-    print("\nStep 1/3: Calculating samplings per location/month...")
+    print("\nStep 1/4: Calculating samplings per location/month...")
     step_start = time.time()
     con.execute(f"""
         CREATE TEMP TABLE samplings_agg AS
@@ -114,11 +114,11 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 2: Calculate observations and join with samplings, insert directly into SQLite
-    print("\nStep 2/3: Calculating observations and inserting into SQLite...")
+    # Step 2: Calculate observations and join with samplings
+    print("\nStep 2/4: Calculating observations...")
     step_start = time.time()
     con.execute(f"""
-        INSERT INTO sqlite_db.month_observations (location_id, month, scientific_name, observations, samplings)
+        CREATE TEMP TABLE observations_agg AS
         SELECT
             o.location_id,
             o.month,
@@ -146,6 +146,22 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
+    # Step 3: Insert into SQLite by month for progress tracking
+    print("\nStep 3/4: Inserting into SQLite...")
+    step_start = time.time()
+    total_rows = 0
+    for month in range(1, 13):
+        month_start = time.time()
+        con.execute(f"""
+            INSERT INTO sqlite_db.month_observations
+            SELECT * FROM observations_agg WHERE month = {month}
+        """)
+        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_observations WHERE month = {month}").fetchone()[0]
+        total_rows += month_count
+        if month_count > 0:
+            print(f"  Month {month:2d}: {month_count:,} rows ({format_duration(time.time() - month_start)})")
+    print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
+
     # Print summary statistics from DuckDB before closing
     result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_observations").fetchone()
     obs_count = result[0]
@@ -158,8 +174,8 @@ def build_database(
 
     con.close()
 
-    # Step 3: Create indexes using sqlite3
-    print("\nStep 3/3: Creating indexes...")
+    # Step 4: Create indexes using sqlite3
+    print("\nStep 4/4: Creating indexes...")
     step_start = time.time()
     sqlite_con = sqlite3.connect(output_db)
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_observations(location_id, month, scientific_name)")
