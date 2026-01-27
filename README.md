@@ -6,6 +6,27 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 
 - Python 3.8+
 - DuckDB: `pip install duckdb`
+- aria2c (for downloading): `brew install aria2`
+
+## Download eBird Data
+
+Download the eBird Basic Dataset using aria2c for fast parallel downloading:
+
+```bash
+# Download the dataset (replace with current release)
+caffeinate -dimsu aria2c -d ~/Downloads -c -x 2 -s 2 -j 1 --retry-wait=30 --max-tries=0 https://download.ebird.org/ebd/prepackaged/ebd_relDec-2025.tar
+```
+
+## Extract the archive
+
+Run `tar -xvf ebd_relDec-2025.tar` or double click to extract (Mac).
+
+The `-x 2 -s 2 -j 1` flags enable 2 parallel connections for faster downloads.
+
+After extraction, you'll have two main files:
+
+- `ebd_relDec-2025.txt` - Species observations (the large one)
+- `ebd_sampling_relDec-2025.txt` - Sampling events/checklists
 
 ## Usage
 
