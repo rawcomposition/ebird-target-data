@@ -4,3 +4,4 @@ sampling.tsv
 species.tsv
 .DS_Store
 ebd_filtered.tsv
+.env
