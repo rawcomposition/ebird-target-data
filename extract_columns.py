@@ -21,9 +21,6 @@ from pathlib import Path
 # Columns needed by build_month_observations.py
 REQUIRED_COLUMNS = [
     "LOCALITY ID",
-    "LOCALITY",
-    "LATITUDE",
-    "LONGITUDE",
     "OBSERVATION DATE",
     "SAMPLING EVENT IDENTIFIER",
     "GROUP IDENTIFIER",

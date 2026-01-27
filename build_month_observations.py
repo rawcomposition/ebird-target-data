@@ -173,39 +173,15 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 4: Build location table from species file
-    print("\nStep 4/5: Building location table...")
-    step_start = time.time()
-    con.execute(f"""
-        CREATE TEMP TABLE locations_agg AS
-        SELECT
-            "LOCALITY ID" AS location_id,
-            FIRST("LOCALITY") AS name,
-            FIRST("LATITUDE") AS latitude,
-            FIRST("LONGITUDE") AS longitude
-        FROM read_csv(
-            '{species_file}',
-            delim='\t',
-            header=true,
-            quote='',
-            ignore_errors=true
-        )
-        WHERE "LOCALITY ID" IS NOT NULL
-        GROUP BY "LOCALITY ID"
-    """)
-
-    con.execute("""
-        INSERT INTO sqlite_db.location (location_id, name, latitude, longitude)
-        SELECT location_id, name, latitude, longitude
-        FROM locations_agg
-    """)
-    print(f"  Done ({format_duration(time.time() - step_start)})")
+    # Step 4: Location table is created but not populated
+    # (location data will be populated by a separate process)
+    print("\nStep 4/5: Skipping location table (populated separately)...")
 
     # Print summary statistics from DuckDB before closing
     result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_observations").fetchone()
     obs_count = result[0]
 
-    result = con.execute("SELECT COUNT(*) FROM sqlite_db.location").fetchone()
+    result = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_observations").fetchone()
     loc_count = result[0]
 
     result = con.execute("SELECT COUNT(DISTINCT scientific_name) FROM sqlite_db.month_observations").fetchone()
