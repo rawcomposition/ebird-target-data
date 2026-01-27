@@ -371,7 +371,7 @@ def build_database(
     print("\nStep 6/6: Creating indexes...")
     step_start = time.time()
     sqlite_con = sqlite3.connect(output_db)
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_mo_species_month_loc ON month_obs(species_id, month, location_id)")
+    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_mo_species_loc_month ON month_obs(species_id, location_id, month)")
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, species_id)")
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)")
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)")

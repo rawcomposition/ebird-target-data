@@ -29,6 +29,7 @@ Run the all-in-one script to download and build the database:
 ```
 
 This will:
+
 1. Download the latest eBird Basic Dataset for the current month
 2. Extract the archive
 3. Extract required columns
@@ -120,13 +121,15 @@ CREATE TABLE month_obs (
 ```sql
 SELECT
     m.location_id,
-    m.obs,
-    m.samples,
-    ROUND(100.0 * m.obs / m.samples, 1) AS chance_pct
+    SUM(m.obs) AS obs,
+    SUM(m.samples) AS samples,
+    ROUND(100.0 * (1.0*SUM(m.obs) / SUM(m.samples)), 1) AS chance_pct
 FROM month_obs m
-WHERE m.species_id = 1
-  AND m.samples >= 5
-ORDER BY chance_pct DESC;
+WHERE m.species_id = 1961
+GROUP BY m.location_id
+HAVING SUM(m.samples) >= 5
+ORDER BY (1.0*SUM(m.obs) / SUM(m.samples)) DESC
+LIMIT 200;
 ```
 
 ### Best locations to find a species in March
@@ -138,10 +141,28 @@ SELECT
     m.samples,
     ROUND(100.0 * m.obs / m.samples, 1) AS chance_pct
 FROM month_obs m
-WHERE m.species_id = 1
+WHERE m.species_id = 3781
   AND m.month = 3
   AND m.samples >= 5
 ORDER BY chance_pct DESC;
+```
+
+### Best locations to find a species in Canada (year-round)
+
+```sql
+SELECT
+    m.location_id,
+    SUM(m.obs) AS obs,
+    SUM(m.samples) AS samples,
+    ROUND(100.0 * (1.0*SUM(m.obs) / SUM(m.samples)), 1) AS chance_pct
+FROM month_obs m
+JOIN hotspots h ON h.id = m.location_id
+WHERE m.species_id = 1961
+    AND h.country_code = 'CA'
+GROUP BY m.location_id
+HAVING SUM(m.samples) >= 5
+ORDER BY (1.0*SUM(m.obs) / SUM(m.samples)) DESC
+LIMIT 200;
 ```
 
 ## Notes
