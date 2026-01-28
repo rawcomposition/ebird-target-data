@@ -1,0 +1,4 @@
+duckdb
+python-dateutil
+requests
+simple-term-menu

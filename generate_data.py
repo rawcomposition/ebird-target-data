@@ -19,12 +19,10 @@ For very large files (100+ GB), you may want to:
 """
 
 import argparse
-import json
 import os
 import sqlite3
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Thread, Lock
 from typing import Optional

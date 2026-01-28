@@ -5,13 +5,18 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 ## Requirements
 
 - Python 3.8+
-- DuckDB: `python3 -m pip install duckdb`
-- Requests: `python3 -m pip install requests`
-- Simple Term Menu: `python3 -m pip install simple-term-menu`
 - aria2c (for downloading): `brew install aria2`
 - pigz (for fast decompression): `brew install pigz`
 
 ## Setup
+
+Create a virtual environment and install Python dependencies:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
 Copy the example environment file and add your eBird API key (get one at https://ebird.org/api/keygen):
 
@@ -21,10 +26,11 @@ cp .env.example .env
 
 ## Usage
 
-Run the interactive CLI:
+Activate the virtual environment and run the interactive CLI:
 
 ```bash
-python3 cli.py
+source venv/bin/activate
+python cli.py
 ```
 
 The CLI will prompt you to:
@@ -35,7 +41,7 @@ The CLI will prompt you to:
    - **Extract Archive** - Extract the gzipped data file from the tar
    - **Filter Dataset** - Extract required columns and filter to hotspots/complete checklists
    - **Build SQLite Database** - Generate the final SQLite database
-   - **Build SQLite Database (skip species & hotspots)** - Generate the final SQLite database without downloading the species and hotspots from the eBird API
+   - **Build SQLite Database (skip hotspots)** - Generate the database without downloading hotspots from the eBird API
    - **All** - Run all steps in sequence
 
 Each step skips automatically if its output file already exists. Delete the file to re-run that step.

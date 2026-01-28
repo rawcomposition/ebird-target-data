@@ -43,27 +43,22 @@ def load_env_file() -> dict:
 
 def get_month_options() -> list[tuple[str, str, str]]:
     """
-    Get current and previous month options.
+    Get the 3 most recent months as options.
     Returns list of (display_name, month_abbrev, year) tuples.
-    E.g., [("Jan 2026", "Jan", "2026"), ("Dec 2025", "Dec", "2025")]
+    E.g., [("Jan 2026", "Jan", "2026"), ("Dec 2025", "Dec", "2025"), ...]
     """
+    from dateutil.relativedelta import relativedelta
+
+    options = []
     now = datetime.now()
-    current_month = now.strftime("%b")
-    current_year = now.strftime("%Y")
 
-    # Calculate previous month
-    if now.month == 1:
-        prev_month = "Dec"
-        prev_year = str(now.year - 1)
-    else:
-        prev_date = now.replace(month=now.month - 1)
-        prev_month = prev_date.strftime("%b")
-        prev_year = prev_date.strftime("%Y")
+    for i in range(3):
+        date = now - relativedelta(months=i)
+        month_abbrev = date.strftime("%b")
+        year = date.strftime("%Y")
+        options.append((f"{month_abbrev} {year}", month_abbrev, year))
 
-    return [
-        (f"{current_month} {current_year}", current_month, current_year),
-        (f"{prev_month} {prev_year}", prev_month, prev_year),
-    ]
+    return options
 
 
 def get_file_paths(month_abbrev: str, year: str) -> dict:
@@ -151,7 +146,7 @@ def run_download(paths: dict) -> bool:
 
     try:
         # Use aria2c for fast, resumable downloads
-        result = subprocess.run(
+        subprocess.run(
             [
                 "caffeinate", "-dimsu",
                 "aria2c",
@@ -169,12 +164,12 @@ def run_download(paths: dict) -> bool:
         )
         print("\nDownload complete!")
         return True
-    except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError:
         # Clean up partial download file on failure
         if tar_file.exists():
             tar_file.unlink()
-        print(f"\nDownload failed. The dataset may not be available yet.")
-        print(f"eBird releases datasets around mid-month.")
+        print("\nDownload failed. The dataset may not be available yet.")
+        print("eBird releases datasets around mid-month.")
         return False
     except FileNotFoundError:
         print("\nError: aria2c not found. Please install it with: brew install aria2")
@@ -212,7 +207,7 @@ def run_extract(paths: dict) -> bool:
 
     try:
         # Extract only the required file from the tar
-        result = subprocess.run(
+        subprocess.run(
             [
                 "caffeinate", "-i",
                 "tar", "-xf", str(tar_file),
@@ -269,7 +264,7 @@ def run_filter(paths: dict) -> bool:
     extract_script = SCRIPT_DIR / "extract_columns.py"
 
     try:
-        result = subprocess.run(
+        subprocess.run(
             [
                 "caffeinate", "-dims",
                 "python3", str(extract_script),
@@ -337,7 +332,7 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
         cmd.append("--skip-hotspots")
 
     try:
-        result = subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True)
         print("\nDatabase build complete!")
         return True
     except subprocess.CalledProcessError as e:
@@ -355,7 +350,7 @@ def main():
     month_options = get_month_options()
     month_display = [opt[0] for opt in month_options]
 
-    month_idx = prompt_choice("Which dataset do you want to use?", month_display)
+    month_idx = prompt_choice("Which dataset do you want to use? Some not be available yet.", month_display)
     selected_month = month_options[month_idx]
     month_abbrev = selected_month[1]
     year = selected_month[2]

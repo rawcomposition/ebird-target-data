@@ -8,3 +8,4 @@ ebd_filtered.tsv
 .tmp
 datasets/
 output/
+venv/
