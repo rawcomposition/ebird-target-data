@@ -5,3 +5,6 @@ species.tsv
 .DS_Store
 ebd_filtered.tsv
 .env
+.tmp
+datasets/
+output/

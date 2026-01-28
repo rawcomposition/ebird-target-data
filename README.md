@@ -7,76 +7,43 @@ Builds a SQLite database of bird observation statistics from eBird Basic Dataset
 - Python 3.8+
 - DuckDB: `python3 -m pip install duckdb`
 - Requests: `python3 -m pip install requests`
+- Simple Term Menu: `python3 -m pip install simple-term-menu`
 - aria2c (for downloading): `brew install aria2`
 - pigz (for fast decompression): `brew install pigz`
 
 ## Setup
 
-Create a `.env` file in the project directory with your eBird API key:
-
-```
-EBIRD_API_KEY=your_api_key_here
-```
-
-You can get an API key from https://ebird.org/api/keygen
-
-## Quick Start
-
-Run the all-in-one script to download and build the database:
+Copy the example environment file and add your eBird API key (get one at https://ebird.org/api/keygen):
 
 ```bash
-./get-latest
+cp .env.example .env
 ```
 
-This will:
+## Usage
 
-1. Download the latest eBird Basic Dataset for the current month
-2. Extract the archive
-3. Extract required columns
-4. Build the SQLite database
-
-The script skips steps where output files already exist. Delete intermediate files to re-run those steps.
-
-To specify a custom output database:
+Run the interactive CLI:
 
 ```bash
-./get-latest my_ebird.db
+python3 cli.py
 ```
 
-## Manual Steps
+The CLI will prompt you to:
 
-If you need to run steps individually:
+1. Choose which dataset to use (current or previous month)
+2. Choose which step to run:
+   - **Download EBD Dataset** - Download the eBird Basic Dataset
+   - **Extract Archive** - Extract the gzipped data file from the tar
+   - **Filter Dataset** - Extract required columns and filter to hotspots/complete checklists
+   - **Build SQLite Database** - Generate the final SQLite database
+   - **Build SQLite Database (skip species & hotspots)** - Generate the final SQLite database without downloading the species and hotspots from the eBird API
+   - **All** - Run all steps in sequence
 
-### Download eBird Data
+Each step skips automatically if its output file already exists. Delete the file to re-run that step.
 
-Download the eBird Basic Dataset using aria2c for fast parallel downloading:
+Files are stored in:
 
-```bash
-# Download the dataset (replace with current release)
-caffeinate -dimsu aria2c -d ~/Downloads -c -x 2 -s 2 -j 1 --retry-wait=30 --max-tries=0 https://download.ebird.org/ebd/prepackaged/ebd_relDec-2025.tar
-```
-
-### Extract the archive
-
-```bash
-caffeinate -i tar -xf ~/Downloads/ebd_relDec-2025.tar -C ~/Downloads
-```
-
-### Extract required columns
-
-Extract only the columns needed for processing. This streams from the gzipped file and creates a much smaller TSV:
-
-```bash
-caffeinate -dims python3 extract_columns.py ~/Downloads/ebd_relDec-2025.txt.gz ebd_filtered.tsv
-```
-
-### Build the database
-
-```bash
-caffeinate -dims python3 generate_data.py ebd_filtered.tsv ebird.db \
-    --memory-limit 24GB \
-    --threads 8
-```
+- `datasets/` - Downloaded and intermediate data files
+- `output/` - Final SQLite databases
 
 ## Output Schema
 
@@ -178,4 +145,4 @@ LIMIT 200;
 - Group checklists are deduplicated (multiple observers = 1 sampling)
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
 - Hotspots are downloaded via eBird API with 5 second delays between countries
-- Taxonomy is downloaded from eBird API (no API key required)
+- Taxonomy is downloaded from eBird API
