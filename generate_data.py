@@ -30,33 +30,7 @@ from typing import Optional
 import duckdb
 import requests
 
-
-def format_duration(seconds: float) -> str:
-    """Format duration in human-readable form."""
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    elif seconds < 3600:
-        minutes = int(seconds // 60)
-        secs = seconds % 60
-        return f"{minutes}m {secs:.0f}s"
-    else:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        return f"{hours}h {minutes}m"
-
-
-def load_env_file() -> dict:
-    """Load environment variables from .env file."""
-    env_vars = {}
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
-    return env_vars
+from utils import format_duration, load_env_file
 
 
 def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
@@ -401,34 +375,24 @@ def build_database(
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
     print(f"  Created {year_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
-    # Print summary statistics from DuckDB before closing
-    result = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs").fetchone()
-    obs_count = result[0]
-
-    result = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs").fetchone()
-    loc_count = result[0]
-
-    result = con.execute("SELECT COUNT(DISTINCT species_id) FROM sqlite_db.month_obs").fetchone()
-    species_count = result[0]
+    # Get summary statistics from DuckDB before closing
+    obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs").fetchone()[0]
+    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs").fetchone()[0]
+    species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM sqlite_db.month_obs").fetchone()[0]
 
     con.close()
 
     # Wait for hotspots download to complete
     if hotspot_thread:
         if hotspot_thread.is_alive():
-            # Thread still running - flush buffer and switch to live logging
             print("\n  Waiting for hotspots download to complete...")
             with hotspot_log_state["lock"]:
-                # Print any buffered messages
                 for msg in hotspot_log_state["buffer"]:
                     print(msg)
                 hotspot_log_state["buffer"].clear()
-                # Enable live logging for remaining messages
                 hotspot_log_state["live"] = True
-            hotspot_thread.join()
-        else:
-            # Thread already finished
-            hotspot_thread.join()
+
+        hotspot_thread.join()
 
         if hotspot_result["error"]:
             print(f"  Hotspots download error: {hotspot_result['error']}")
@@ -439,20 +403,27 @@ def build_database(
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating indexes...")
     step_start = time.time()
-    sqlite_con = sqlite3.connect(output_db)
-    # month_obs indexes
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_mo_species_loc_month ON month_obs(species_id, location_id, month)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, species_id)")
-    # year_obs indexes
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_species_loc ON year_obs(species_id, location_id)")
-    sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_loc_species ON year_obs(location_id, species_id)")
-    # hotspots indexes (only if not skipping hotspots)
+
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS idx_mo_species_loc_month ON month_obs(species_id, location_id, month)",
+        "CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, species_id)",
+        "CREATE INDEX IF NOT EXISTS idx_yo_species_loc ON year_obs(species_id, location_id)",
+        "CREATE INDEX IF NOT EXISTS idx_yo_loc_species ON year_obs(location_id, species_id)",
+    ]
+
     if not skip_hotspots:
-        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)")
-        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)")
-        sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)")
+        indexes.extend([
+            "CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)",
+            "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
+            "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)",
+        ])
+
+    sqlite_con = sqlite3.connect(output_db)
+    for index_sql in indexes:
+        sqlite_con.execute(index_sql)
     sqlite_con.commit()
     sqlite_con.close()
+
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
     # Summary

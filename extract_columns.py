@@ -18,7 +18,9 @@ import sys
 import time
 from pathlib import Path
 
-# Columns needed by build_month_observations.py
+from utils import format_duration, format_size
+
+# Columns needed by generate_data.py
 REQUIRED_COLUMNS = [
     "LOCALITY ID",
     "OBSERVATION DATE",
@@ -27,34 +29,8 @@ REQUIRED_COLUMNS = [
     "SCIENTIFIC NAME",
 ]
 
-# Columns used for filtering (not included in output)
-FILTER_COLUMNS = ["ALL SPECIES REPORTED", "CATEGORY", "LOCALITY TYPE"]
-
 # Valid category values (set for O(1) lookup)
 VALID_CATEGORIES = frozenset(("species", "issf"))
-
-
-def format_size(bytes_count: int) -> str:
-    """Format bytes as human-readable size."""
-    for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if bytes_count < 1024:
-            return f"{bytes_count:.1f} {unit}"
-        bytes_count /= 1024
-    return f"{bytes_count:.1f} PB"
-
-
-def format_duration(seconds: float) -> str:
-    """Format duration in human-readable form."""
-    if seconds < 60:
-        return f"{seconds:.1f}s"
-    elif seconds < 3600:
-        minutes = int(seconds // 60)
-        secs = seconds % 60
-        return f"{minutes}m {secs:.0f}s"
-    else:
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        return f"{hours}h {minutes}m"
 
 
 def extract_columns(input_file: Path, output_file: Path) -> None:

@@ -21,24 +21,12 @@ except ImportError:
     print("Install with: python3 -m pip install simple-term-menu")
     sys.exit(1)
 
+from utils import load_env_file
+
 # Get script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DATASETS_DIR = SCRIPT_DIR / "datasets"
 OUTPUTS_DIR = SCRIPT_DIR / "output"
-
-
-def load_env_file() -> dict:
-    """Load environment variables from .env file."""
-    env_vars = {}
-    env_path = SCRIPT_DIR / ".env"
-    if env_path.exists():
-        with open(env_path) as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = line.split("=", 1)
-                    env_vars[key.strip()] = value.strip().strip('"').strip("'")
-    return env_vars
 
 
 def get_month_options() -> list[tuple[str, str, str]]:
@@ -340,22 +328,45 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
         return False
 
 
+def run_all_steps(paths: dict, env_vars: dict) -> bool:
+    """
+    Run all pipeline steps in sequence.
+    Returns True if all steps succeed, exits on failure.
+    """
+    print("\nRunning all steps...")
+
+    steps = [
+        (run_download, "Download step failed."),
+        (run_extract, "Extract step failed."),
+        (run_filter, "Filter step failed."),
+    ]
+
+    for step_fn, error_msg in steps:
+        if not step_fn(paths):
+            print(f"\nAborting: {error_msg}")
+            sys.exit(1)
+
+    if not run_build_db(paths, env_vars):
+        print("\nAborting: Build database step failed.")
+        sys.exit(1)
+
+    return True
+
+
 def main():
     print_header()
 
-    # Load environment variables
     env_vars = load_env_file()
 
     # Step 1: Choose dataset month
     month_options = get_month_options()
     month_display = [opt[0] for opt in month_options]
 
-    month_idx = prompt_choice("Which dataset do you want to use? Some may not be available yet.", month_display)
-    selected_month = month_options[month_idx]
-    month_abbrev = selected_month[1]
-    year = selected_month[2]
-
-    # Get file paths for selected month
+    month_idx = prompt_choice(
+        "Which dataset do you want to use? Some may not be available yet.",
+        month_display
+    )
+    _, month_abbrev, year = month_options[month_idx]
     paths = get_file_paths(month_abbrev, year)
 
     # Step 2: Choose which operation to run
@@ -374,38 +385,19 @@ def main():
     print()
     print("=" * 50)
 
-    success = True
-
-    if op_idx == 0:  # Download only
+    # Map operation index to handler
+    if op_idx == 0:
         success = run_download(paths)
-    elif op_idx == 1:  # Extract only
+    elif op_idx == 1:
         success = run_extract(paths)
-    elif op_idx == 2:  # Filter only
+    elif op_idx == 2:
         success = run_filter(paths)
-    elif op_idx == 3:  # Build DB only
+    elif op_idx == 3:
         success = run_build_db(paths, env_vars)
-    elif op_idx == 4:  # Build DB only (skip hotspots)
+    elif op_idx == 4:
         success = run_build_db(paths, env_vars, skip_hotspots=True)
-    elif op_idx == 5:  # All steps
-        print("\nRunning all steps...")
-
-        if not run_download(paths):
-            print("\nAborting: Download step failed.")
-            sys.exit(1)
-
-        if not run_extract(paths):
-            print("\nAborting: Extract step failed.")
-            sys.exit(1)
-
-        if not run_filter(paths):
-            print("\nAborting: Filter step failed.")
-            sys.exit(1)
-
-        if not run_build_db(paths, env_vars):
-            print("\nAborting: Build database step failed.")
-            sys.exit(1)
-
-        success = True
+    else:
+        success = run_all_steps(paths, env_vars)
 
     print()
     print("=" * 50)
