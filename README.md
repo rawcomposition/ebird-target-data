@@ -72,7 +72,6 @@ CREATE TABLE hotspots (
     subnational2_code TEXT,       -- County
     lat REAL,
     lng REAL,
-    latest_obs_date TEXT,
     num_species INTEGER,          -- All-time species count
     num_checklists INTEGER        -- All-time checklist count
 );

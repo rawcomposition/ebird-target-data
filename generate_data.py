@@ -101,7 +101,6 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
             subnational2_code TEXT,
             lat REAL,
             lng REAL,
-            latest_obs_date TEXT,
             num_species INTEGER,
             num_checklists INTEGER
         )
@@ -126,7 +125,7 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
                 sqlite_con.execute(
                     """INSERT INTO hotspots
                        (id, name, country_code, subnational1_code, subnational2_code,
-                        lat, lng, latest_obs_date, num_species, num_checklists)
+                        lat, lng, num_species, num_checklists)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         hs.get("locId"),
@@ -136,7 +135,6 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
                         hs.get("subnational2Code"),
                         hs.get("lat"),
                         hs.get("lng"),
-                        hs.get("latestObsDt"),
                         hs.get("numSpeciesAllTime"),
                         hs.get("numChecklistsAllTime"),
                     )
