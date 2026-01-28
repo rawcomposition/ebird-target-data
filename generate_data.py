@@ -26,7 +26,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Lock
 from typing import Optional
 
 import duckdb
@@ -95,11 +95,23 @@ def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
     return len(taxonomy)
 
 
-def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection) -> int:
+def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: dict) -> int:
     """
     Download all eBird hotspots by country and insert into hotspots table.
     Returns the number of hotspots inserted.
+
+    log_state dict contains:
+        - buffer: list of messages to buffer
+        - live: bool, when True print directly instead of buffering
+        - lock: threading.Lock for thread safety
     """
+    def log(msg: str):
+        with log_state["lock"]:
+            if log_state["live"]:
+                print(msg)
+            else:
+                log_state["buffer"].append(msg)
+
     # Get country list
     countries_url = f"https://api.ebird.org/v2/ref/region/list/country/world?fmt=json&key={api_key}"
     response = requests.get(countries_url, timeout=60)
@@ -160,10 +172,10 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection) -> int:
 
             sqlite_con.commit()
             total_hotspots += len(hotspots)
-            print(f"    [{i+1}/{len(countries)}] {country_name}: {len(hotspots):,} hotspots")
+            log(f"    [{i+1}/{len(countries)}] {country_name}: {len(hotspots):,} hotspots")
 
         except requests.RequestException as e:
-            print(f"    [{i+1}/{len(countries)}] {country_name}: Error - {e}")
+            log(f"    [{i+1}/{len(countries)}] {country_name}: Error - {e}")
 
         # 5 second pause between countries (except after the last one)
         if i < len(countries) - 1:
@@ -172,14 +184,14 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection) -> int:
     return total_hotspots
 
 
-def download_hotspots_background(api_key: str, output_db: Path, result_container: dict) -> None:
+def download_hotspots_background(api_key: str, output_db: Path, result_container: dict, log_state: dict) -> None:
     """
     Background thread function to download hotspots.
     Stores result in result_container dict.
     """
     try:
         sqlite_con = sqlite3.connect(output_db)
-        count = download_hotspots(api_key, sqlite_con)
+        count = download_hotspots(api_key, sqlite_con, log_state)
         sqlite_con.close()
         result_container["count"] = count
         result_container["error"] = None
@@ -241,6 +253,7 @@ def build_database(
 
     # Step 1: Download taxonomy (quick, no API key needed)
     hotspot_result = {"count": 0, "error": None}
+    hotspot_log_state = {"buffer": [], "live": False, "lock": Lock()}
     hotspot_thread = None
     taxonomy_count = 0
 
@@ -256,10 +269,10 @@ def build_database(
         # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
         step_num += 1
         if api_key:
-            print(f"\nStep {step_num}/{total_steps}: Starting hotspots download in background...")
+            print(f"\nStep {step_num}/{total_steps}: Downloading hotspots in background...")
             hotspot_thread = Thread(
                 target=download_hotspots_background,
-                args=(api_key, output_db, hotspot_result),
+                args=(api_key, output_db, hotspot_result, hotspot_log_state),
                 daemon=True
             )
             hotspot_thread.start()
@@ -407,12 +420,25 @@ def build_database(
 
     # Wait for hotspots download to complete
     if hotspot_thread:
-        print("\n  Waiting for hotspots download to complete...")
-        hotspot_thread.join()
+        if hotspot_thread.is_alive():
+            # Thread still running - flush buffer and switch to live logging
+            print("\n  Waiting for hotspots download to complete...")
+            with hotspot_log_state["lock"]:
+                # Print any buffered messages
+                for msg in hotspot_log_state["buffer"]:
+                    print(msg)
+                hotspot_log_state["buffer"].clear()
+                # Enable live logging for remaining messages
+                hotspot_log_state["live"] = True
+            hotspot_thread.join()
+        else:
+            # Thread already finished
+            hotspot_thread.join()
+
         if hotspot_result["error"]:
             print(f"  Hotspots download error: {hotspot_result['error']}")
         else:
-            print(f"  Hotspots download complete: {hotspot_result['count']:,} hotspots")
+            print(f"  Hotspots complete: {hotspot_result['count']:,} hotspots")
 
     # Step 7: Create indexes using sqlite3
     step_num += 1
