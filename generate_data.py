@@ -15,7 +15,7 @@ For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
     - Use --memory-limit to control DuckDB's memory usage (default: 80% of RAM)
     - Use --threads to control parallelism (default: all cores)
-    - Use --skip-api to skip taxonomy and hotspot downloads
+    - Use --skip-hotspots to skip hotspot downloads
 """
 
 import argparse
@@ -481,8 +481,8 @@ Examples:
   python generate_data.py ebd_filtered.tsv output.db \\
       --memory-limit 24GB --threads 8
 
-  # Skip API downloads (taxonomy and hotspots)
-  python generate_data.py ebd_filtered.tsv output.db --skip-api
+  # Skip hotspots download
+  python generate_data.py ebd_filtered.tsv output.db --skip-hotspots
         """,
     )
     parser.add_argument(

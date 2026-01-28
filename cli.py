@@ -68,7 +68,7 @@ def get_file_paths(month_abbrev: str, year: str) -> dict:
     - tar: datasets/ebd-jan-2026.tar
     - txt_gz: datasets/ebd-jan-2026.txt.gz
     - filtered: datasets/ebd-jan-2026-filtered.tsv
-    - db: outputs/targets-jan-2026.db
+    - db: output/targets-jan-2026.db
     - ebird_release: ebd_relJan-2026 (for download URL and tar extraction)
     """
     month_lower = month_abbrev.lower()
@@ -350,7 +350,7 @@ def main():
     month_options = get_month_options()
     month_display = [opt[0] for opt in month_options]
 
-    month_idx = prompt_choice("Which dataset do you want to use? Some not be available yet.", month_display)
+    month_idx = prompt_choice("Which dataset do you want to use? Some may not be available yet.", month_display)
     selected_month = month_options[month_idx]
     month_abbrev = selected_month[1]
     year = selected_month[2]

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Extract only the columns needed for build_month_observations.py from a gzipped eBird file.
+Extract only the columns needed for generate_data.py from a gzipped eBird file.
 
 This reduces the file size significantly by keeping only essential columns,
 making subsequent processing faster and requiring less disk space.
