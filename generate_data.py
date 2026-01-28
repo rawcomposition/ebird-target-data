@@ -206,16 +206,16 @@ def build_database(
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
-    skip_api: bool = False,
+    skip_hotspots: bool = False,
 ) -> None:
     """
     Build the month_obs database from eBird species file.
     """
     start_time = time.time()
 
-    # Load API key from .env
+    # Load API key from .env (only needed for hotspots download)
     api_key = None
-    if not skip_api:
+    if not skip_hotspots:
         env_vars = load_env_file()
         api_key = env_vars.get("EBIRD_API_KEY") or os.environ.get("EBIRD_API_KEY")
 
@@ -247,26 +247,25 @@ def build_database(
     if threads:
         print(f"Threads: {threads}")
 
-    # Determine number of steps based on skip_api
-    total_steps = 5 if skip_api else 7
+    # Determine number of steps based on skip_hotspots
+    total_steps = 6 if skip_hotspots else 7
     step_num = 0
 
-    # Step 1: Download taxonomy (quick, no API key needed)
+    # Step 1: Download taxonomy (always required for species table)
     hotspot_result = {"count": 0, "error": None}
     hotspot_log_state = {"buffer": [], "live": False, "lock": Lock()}
     hotspot_thread = None
-    taxonomy_count = 0
 
-    if not skip_api:
-        step_num += 1
-        print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
-        step_start = time.time()
-        sqlite_con = sqlite3.connect(output_db)
-        taxonomy_count = download_taxonomy(sqlite_con)
-        sqlite_con.close()
-        print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
+    step_start = time.time()
+    sqlite_con = sqlite3.connect(output_db)
+    taxonomy_count = download_taxonomy(sqlite_con)
+    sqlite_con.close()
+    print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
 
-        # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
+    # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
+    if not skip_hotspots:
         step_num += 1
         if api_key:
             print(f"\nStep {step_num}/{total_steps}: Downloading hotspots in background...")
@@ -278,8 +277,6 @@ def build_database(
             hotspot_thread.start()
         else:
             print(f"\nStep {step_num}/{total_steps}: Skipping hotspots download (no API key)")
-    else:
-        print("\nSkipping API steps (--skip-api specified)")
 
     # Attach SQLite database for output
     con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
@@ -451,8 +448,8 @@ def build_database(
     # year_obs indexes
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_species_loc ON year_obs(species_id, location_id)")
     sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_yo_loc_species ON year_obs(location_id, species_id)")
-    # hotspots indexes (only if not skipping API)
-    if not skip_api:
+    # hotspots indexes (only if not skipping hotspots)
+    if not skip_hotspots:
         sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)")
         sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)")
         sqlite_con.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)")
@@ -516,9 +513,9 @@ Examples:
         help="Number of threads for DuckDB (default: all cores)",
     )
     parser.add_argument(
-        "--skip-api",
+        "--skip-hotspots",
         action="store_true",
-        help="Skip downloading taxonomy and hotspots from eBird API",
+        help="Skip downloading hotspots from eBird API",
     )
 
     args = parser.parse_args()
@@ -537,7 +534,7 @@ Examples:
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,
         threads=args.threads,
-        skip_api=args.skip_api,
+        skip_hotspots=args.skip_hotspots,
     )
 
 

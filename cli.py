@@ -285,7 +285,7 @@ def run_filter(paths: dict) -> bool:
         return False
 
 
-def run_build_db(paths: dict, env_vars: dict, skip_api: bool = False) -> bool:
+def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bool:
     """
     Build the SQLite database.
     Returns True if successful, False otherwise.
@@ -294,8 +294,8 @@ def run_build_db(paths: dict, env_vars: dict, skip_api: bool = False) -> bool:
     db_file = paths["db"]
 
     print("\n" + "-" * 50)
-    if skip_api:
-        print("Step: Build SQLite Database (skipping species & hotspots)")
+    if skip_hotspots:
+        print("Step: Build SQLite Database (skipping hotspots)")
     else:
         print("Step: Build SQLite Database")
     print("-" * 50)
@@ -318,8 +318,8 @@ def run_build_db(paths: dict, env_vars: dict, skip_api: bool = False) -> bool:
 
     print(f"Memory limit: {memory_limit}GB")
     print(f"Threads: {threads}")
-    if skip_api:
-        print("Skipping species & hotspots download")
+    if skip_hotspots:
+        print("Skipping hotspots download")
     print()
     sys.stdout.flush()
 
@@ -333,8 +333,8 @@ def run_build_db(paths: dict, env_vars: dict, skip_api: bool = False) -> bool:
         "--memory-limit", f"{memory_limit}GB",
         "--threads", threads,
     ]
-    if skip_api:
-        cmd.append("--skip-api")
+    if skip_hotspots:
+        cmd.append("--skip-hotspots")
 
     try:
         result = subprocess.run(cmd, check=True)
@@ -369,7 +369,7 @@ def main():
         "Extract Archive",
         "Filter Dataset",
         "Build SQLite Database",
-        "Build SQLite Database (skip species & hotspots)",
+        "Build SQLite Database (skip hotspots)",
         "All (Run all steps)",
     ]
 
@@ -389,8 +389,8 @@ def main():
         success = run_filter(paths)
     elif op_idx == 3:  # Build DB only
         success = run_build_db(paths, env_vars)
-    elif op_idx == 4:  # Build DB only (skip API)
-        success = run_build_db(paths, env_vars, skip_api=True)
+    elif op_idx == 4:  # Build DB only (skip hotspots)
+        success = run_build_db(paths, env_vars, skip_hotspots=True)
     elif op_idx == 5:  # All steps
         print("\nRunning all steps...")
 

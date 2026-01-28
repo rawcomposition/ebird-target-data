@@ -143,7 +143,6 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print(f"Rows skipped (incomplete checklists): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
-    print(f"Speed: {total_rows / elapsed:,.0f} rows/sec")
     print(f"\nOutput written to: {output_file}")
 
 
