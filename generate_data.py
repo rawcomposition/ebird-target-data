@@ -260,7 +260,8 @@ def build_database(
             month INTEGER NOT NULL,
             species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
-            samples INTEGER NOT NULL
+            samples INTEGER NOT NULL,
+            score REAL NOT NULL
         )
     """)
 
@@ -327,16 +328,19 @@ def build_database(
     for month in range(1, 13):
         month_start = time.time()
         con.execute(f"""
-            INSERT INTO sqlite_db.month_obs (location_id, month, species_id, obs, samples)
+            INSERT INTO sqlite_db.month_obs (location_id, month, species_id, obs, samples, score)
             SELECT
                 o.location_id,
                 o.month,
                 sp.id,
                 o.obs,
-                o.samples
+                o.samples,
+                -- Wilson score lower bound (z=1.96 for 95% confidence)
+                (o.obs + 1.9208 - 1.96 * sqrt(o.obs * (o.samples - o.obs) / o.samples + 0.9604))
+                    / (o.samples + 3.8416) AS score
             FROM observations_agg o
             JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
-            WHERE o.month = {month}
+            WHERE o.month = {month} AND o.obs > 1
         """)
         month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs WHERE month = {month}").fetchone()[0]
         total_rows += month_count
@@ -355,19 +359,24 @@ def build_database(
             location_id TEXT NOT NULL,
             species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
-            samples INTEGER NOT NULL
+            samples INTEGER NOT NULL,
+            score REAL NOT NULL
         )
     """)
 
     con.execute("""
-        INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples)
+        INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples, score)
         SELECT
             location_id,
             species_id,
             SUM(obs) AS obs,
-            SUM(samples) AS samples
+            SUM(samples) AS samples,
+            -- Wilson score lower bound (z=1.96 for 95% confidence)
+            (SUM(obs) + 1.9208 - 1.96 * sqrt(SUM(obs) * (SUM(samples) - SUM(obs)) / SUM(samples) + 0.9604))
+                / (SUM(samples) + 3.8416) AS score
         FROM sqlite_db.month_obs
         GROUP BY location_id, species_id
+        HAVING SUM(obs) > 1
     """)
 
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
@@ -403,10 +412,12 @@ def build_database(
     step_start = time.time()
 
     indexes = [
-        "CREATE INDEX IF NOT EXISTS idx_mo_species_loc_month ON month_obs(species_id, location_id, month)",
-        "CREATE INDEX IF NOT EXISTS idx_month_obs_composite ON month_obs(location_id, month, species_id)",
-        "CREATE INDEX IF NOT EXISTS idx_yo_species_loc ON year_obs(species_id, location_id)",
-        "CREATE INDEX IF NOT EXISTS idx_yo_loc_species ON year_obs(location_id, species_id)",
+        # Species-based queries (sorted by score)
+        "CREATE INDEX IF NOT EXISTS idx_mo_species_score ON month_obs(species_id, score DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_yo_species_score ON year_obs(species_id, score DESC)",
+        # Location-based queries (finding species at a hotspot, no score sorting)
+        "CREATE INDEX IF NOT EXISTS idx_mo_location ON month_obs(location_id, month, species_id)",
+        "CREATE INDEX IF NOT EXISTS idx_yo_location ON year_obs(location_id, species_id)",
     ]
 
     if not skip_hotspots:

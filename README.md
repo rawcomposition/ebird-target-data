@@ -82,7 +82,8 @@ CREATE TABLE month_obs (
     month INTEGER NOT NULL,       -- 1-12
     species_id INTEGER NOT NULL,
     obs INTEGER NOT NULL,         -- Times species was seen
-    samples INTEGER NOT NULL      -- Total checklists at location/month
+    samples INTEGER NOT NULL,     -- Total checklists at location/month
+    score REAL NOT NULL           -- Wilson score lower bound for ranking
 );
 
 -- Aggregated yearly observations (for faster year-round queries)
@@ -90,7 +91,8 @@ CREATE TABLE year_obs (
     location_id TEXT NOT NULL,
     species_id INTEGER NOT NULL,
     obs INTEGER NOT NULL,         -- Times species was seen (all months)
-    samples INTEGER NOT NULL      -- Total checklists at location (all months)
+    samples INTEGER NOT NULL,     -- Total checklists at location (all months)
+    score REAL NOT NULL           -- Wilson score lower bound for ranking
 );
 ```
 
@@ -149,5 +151,11 @@ LIMIT 200;
 - Only includes complete checklists (`ALL SPECIES REPORTED = 1`)
 - Group checklists are deduplicated (multiple observers = 1 sampling)
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
+- Only location/species combinations with at least 2 observations are included
 - Hotspots are downloaded via eBird API with 5 second delays between countries
 - Taxonomy is downloaded from eBird API
+- The `score` column uses the Wilson score lower bound formula (95% confidence, z=1.96):
+  ```
+  (obs + 1.9208 - 1.96 * sqrt(obs * (samples - obs) / samples + 0.9604)) / (samples + 3.8416)
+  ```
+  This balances frequency (obs/samples) with sample size, preventing locations with few checklists from ranking too high.
