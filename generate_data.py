@@ -6,10 +6,10 @@ Uses DuckDB to efficiently process large TSV files (100+ GB) without loading
 them entirely into memory.
 
 Usage:
-    python generate_data.py <species_file> <output.db>
+    python generate_data.py <species_file> <sampling_file> <output.db>
 
 Example:
-    python generate_data.py ebd_filtered.tsv ebird.db
+    python generate_data.py ebd_filtered.tsv sampling_filtered.tsv ebird.db
 
 For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
@@ -202,6 +202,7 @@ def download_hotspots_background(api_key: str, output_db: Path, result_container
 
 def build_database(
     species_file: Path,
+    sampling_file: Path,
     output_db: Path,
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
@@ -210,7 +211,7 @@ def build_database(
     wilson_z: float = 1.96,
 ) -> None:
     """
-    Build the month_obs database from eBird species file.
+    Build the month_obs database from eBird species and sampling files.
     """
     start_time = time.time()
 
@@ -245,6 +246,7 @@ def build_database(
     con.execute("INSTALL sqlite; LOAD sqlite;")
 
     print(f"Processing species file: {species_file}")
+    print(f"Processing sampling file: {sampling_file}")
     print(f"Output database: {output_db}")
     if temp_dir:
         print(f"Temp directory: {temp_dir}")
@@ -301,7 +303,7 @@ def build_database(
         )
     """)
 
-    # Step 3: Calculate samples per (location, month)
+    # Step 3: Calculate samples per (location, month) from sampling file
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Calculating samples per location/month...")
     step_start = time.time()
@@ -312,7 +314,7 @@ def build_database(
             EXTRACT(MONTH FROM CAST("OBSERVATION DATE" AS DATE)) AS month,
             COUNT(DISTINCT COALESCE(NULLIF("GROUP IDENTIFIER", ''), "SAMPLING EVENT IDENTIFIER")) AS samples
         FROM read_csv(
-            '{species_file}',
+            '{sampling_file}',
             delim='\t',
             header=true,
             quote='',
@@ -385,6 +387,7 @@ def build_database(
     print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
 
     # Step 6: Create and populate year_obs table
+    # Aggregate from observations_agg (not month_obs) to avoid losing data filtered at month level
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating year_obs table...")
     step_start = time.time()
@@ -403,16 +406,17 @@ def build_database(
     con.execute(f"""
         INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples, score)
         SELECT
-            location_id,
-            species_id,
-            SUM(obs) AS obs,
-            SUM(samples) AS samples,
+            o.location_id,
+            sp.id AS species_id,
+            SUM(o.obs) AS obs,
+            SUM(o.samples) AS samples,
             -- Wilson score lower bound (z={wilson_z})
-            (SUM(obs) + {z_sq_half} - {wilson_z} * sqrt(SUM(obs) * (SUM(samples) - SUM(obs)) / SUM(samples) + {z_sq_quarter}))
-                / (SUM(samples) + {z_sq}) AS score
-        FROM sqlite_db.month_obs
-        GROUP BY location_id, species_id
-        HAVING SUM(obs) > 1
+            (SUM(o.obs) + {z_sq_half} - {wilson_z} * sqrt(SUM(o.obs) * (SUM(o.samples) - SUM(o.obs)) / SUM(o.samples) + {z_sq_quarter}))
+                / (SUM(o.samples) + {z_sq}) AS score
+        FROM observations_agg o
+        JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
+        GROUP BY o.location_id, sp.id
+        HAVING SUM(o.obs) > 1
     """)
 
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
@@ -492,20 +496,25 @@ def main():
         epilog="""
 Examples:
   # Basic usage
-  python generate_data.py ebd_filtered.tsv output.db
+  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db
 
   # Large dataset with memory and temp directory settings
-  python generate_data.py ebd_filtered.tsv output.db \\
+  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db \\
       --memory-limit 24GB --threads 8
 
   # Skip hotspots download
-  python generate_data.py ebd_filtered.tsv output.db --skip-hotspots
+  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db --skip-hotspots
         """,
     )
     parser.add_argument(
         "species_file",
         type=Path,
         help="Path to species observations file (TSV/TXT)",
+    )
+    parser.add_argument(
+        "sampling_file",
+        type=Path,
+        help="Path to sampling/checklists file (TSV/TXT)",
     )
     parser.add_argument(
         "output_db",
@@ -545,12 +554,17 @@ Examples:
         print(f"Error: Species file not found: {args.species_file}", file=sys.stderr)
         sys.exit(1)
 
+    if not args.sampling_file.exists():
+        print(f"Error: Sampling file not found: {args.sampling_file}", file=sys.stderr)
+        sys.exit(1)
+
     if args.temp_dir and not args.temp_dir.exists():
         print(f"Error: Temp directory not found: {args.temp_dir}", file=sys.stderr)
         sys.exit(1)
 
     build_database(
         args.species_file,
+        args.sampling_file,
         args.output_db,
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,

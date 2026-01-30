@@ -39,9 +39,12 @@ The CLI will prompt you to:
 
 1. Choose which dataset to use (current or previous month)
 2. Choose which step to run:
-   - **Download EBD Dataset** - Download the eBird Basic Dataset
-   - **Extract Archive** - Extract the gzipped data file from the tar
-   - **Filter Dataset** - Extract required columns and filter to hotspots/complete checklists
+   - **Download Species Dataset** - Download the eBird Basic Dataset (species observations)
+   - **Extract Species Archive** - Extract the gzipped species data file from the tar
+   - **Filter Species Dataset** - Extract required columns and filter to hotspots/complete checklists
+   - **Download Sampling Dataset** - Download the eBird Sampling Dataset (all checklists)
+   - **Extract Sampling Archive** - Extract the gzipped sampling data file from the tar
+   - **Filter Sampling Dataset** - Extract required columns and filter to hotspots/complete checklists
    - **Build SQLite Database** - Generate the final SQLite database
    - **Build SQLite Database (skip hotspots)** - Generate the database without downloading hotspots from the eBird API
    - **All** - Run all steps in sequence
@@ -152,6 +155,7 @@ LIMIT 200;
 
 - Only includes hotspot locations (`LOCALITY TYPE = H`)
 - Only includes complete checklists (`ALL SPECIES REPORTED = 1`)
+- Sample counts (total checklists) are calculated from the eBird Sampling Dataset, ensuring accurate counts even for locations with only non-species-level observations
 - Group checklists are deduplicated (multiple observers = 1 sampling)
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
 - Only location/species combinations with at least 2 observations are included
