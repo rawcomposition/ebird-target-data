@@ -14,6 +14,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import requests
+
 try:
     from simple_term_menu import TerminalMenu
 except ImportError:
@@ -27,6 +29,20 @@ from utils import load_env_file
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DATASETS_DIR = SCRIPT_DIR / "datasets"
 OUTPUTS_DIR = SCRIPT_DIR / "output"
+
+
+def send_notification(topic: str, title: str, message: str, success: bool = True) -> None:
+    """Send a notification to an ntfy.sh topic."""
+    emoji = "\u2705" if success else "\u274c"
+    try:
+        requests.post(
+            f"https://ntfy.sh/{topic}",
+            data=f"{message} {emoji}".encode("utf-8"),
+            headers={"Title": title},
+            timeout=10,
+        )
+    except requests.RequestException:
+        pass  # Silently ignore notification failures
 
 
 def get_month_options() -> list[tuple[str, str, str]]:
@@ -298,9 +314,11 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
     # Get config from environment
     memory_limit = env_vars.get("MEMORY_LIMIT", "24")
     threads = env_vars.get("THREADS", "8")
+    wilson_z = env_vars.get("WILSON_SCORE_Z_INDEX", "1.96")
 
     print(f"Memory limit: {memory_limit}GB")
     print(f"Threads: {threads}")
+    print(f"Wilson z-index: {wilson_z}")
     if skip_hotspots:
         print("Skipping hotspots download")
     print()
@@ -315,6 +333,7 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
         str(db_file),
         "--memory-limit", f"{memory_limit}GB",
         "--threads", threads,
+        "--wilson-z", wilson_z,
     ]
     if skip_hotspots:
         cmd.append("--skip-hotspots")
@@ -381,6 +400,7 @@ def main():
 
     print()
     op_idx = prompt_choice("Which step do you want to run?", operations)
+    operation_name = operations[op_idx]
 
     print()
     print("=" * 50)
@@ -405,6 +425,19 @@ def main():
         print("Complete!")
     else:
         print("Failed!")
+
+    # Send notification if configured
+    ntfy_topic = env_vars.get("NTFY_NOTIFICATION_TOPIC")
+    if ntfy_topic:
+        status = "Complete" if success else "Failed"
+        send_notification(
+            topic=ntfy_topic,
+            title=f"EBD Aggregator: {status}",
+            message=f"{operation_name} - {month_display[month_idx]}",
+            success=success,
+        )
+
+    if not success:
         sys.exit(1)
     print("=" * 50)
 

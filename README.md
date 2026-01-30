@@ -24,6 +24,8 @@ Copy the example environment file and add your eBird API key (get one at https:/
 cp .env.example .env
 ```
 
+Optional: Add an [ntfy.sh](https://ntfy.sh) topic to `NTFY_NOTIFICATION_TOPIC` to receive notifications when CLI operations complete.
+
 ## Usage
 
 Activate the virtual environment and run the interactive CLI:
@@ -70,6 +72,7 @@ CREATE TABLE hotspots (
     country_code TEXT,
     subnational1_code TEXT,       -- State/province
     subnational2_code TEXT,       -- County
+    region_code TEXT,             -- Most specific valid region code
     lat REAL,
     lng REAL,
     num_species INTEGER,          -- All-time species count
@@ -154,8 +157,9 @@ LIMIT 200;
 - Only location/species combinations with at least 2 observations are included
 - Hotspots are downloaded via eBird API with 5 second delays between countries
 - Taxonomy is downloaded from eBird API
-- The `score` column uses the Wilson score lower bound formula (95% confidence, z=1.96):
+- The `region_code` column contains the most specific valid region: subnational2 > subnational1 > country (some eBird subnational1 codes are invalid like "CO-", so these fall back to country)
+- The `score` column uses the Wilson score lower bound formula:
   ```
-  (obs + 1.9208 - 1.96 * sqrt(obs * (samples - obs) / samples + 0.9604)) / (samples + 3.8416)
+  (obs + z²/2 - z * sqrt(obs * (samples - obs) / samples + z²/4)) / (samples + z²)
   ```
-  This balances frequency (obs/samples) with sample size, preventing locations with few checklists from ranking too high.
+  The z-index is configurable via `WILSON_SCORE_Z_INDEX` in `.env` (default: 1.96 for 95% confidence). This balances frequency (obs/samples) with sample size, preventing locations with few checklists from ranking too high.

@@ -67,6 +67,33 @@ def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
     return len(taxonomy)
 
 
+def is_valid_subnational1(code: str) -> bool:
+    """
+    Check if a subnational1 code is valid.
+    Some eBird codes are malformed (e.g., "CO-" instead of "CO-DC").
+    Valid codes have content after the dash.
+    """
+    if not code:
+        return False
+    parts = code.split("-", 1)
+    return len(parts) > 1 and bool(parts[1])
+
+
+def get_region_code(hs: dict) -> str:
+    """
+    Get the most specific valid region code for a hotspot.
+    Returns subnational2_code > subnational1_code > country_code.
+    """
+    if hs.get("subnational2Code"):
+        return hs["subnational2Code"]
+
+    sub1 = hs.get("subnational1Code")
+    if is_valid_subnational1(sub1):
+        return sub1
+
+    return hs.get("countryCode")
+
+
 def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: dict) -> int:
     """
     Download all eBird hotspots by country and insert into hotspots table.
@@ -99,6 +126,7 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
             country_code TEXT,
             subnational1_code TEXT,
             subnational2_code TEXT,
+            region_code TEXT,
             lat REAL,
             lng REAL,
             num_species INTEGER,
@@ -122,17 +150,19 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
 
             # Insert hotspots
             for hs in hotspots:
+                sub1 = hs.get("subnational1Code")
                 sqlite_con.execute(
                     """INSERT INTO hotspots
                        (id, name, country_code, subnational1_code, subnational2_code,
-                        lat, lng, num_species, num_checklists)
+                        region_code, lat, lng, num_species, num_checklists)
                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         hs.get("locId"),
                         hs.get("locName"),
                         hs.get("countryCode"),
-                        hs.get("subnational1Code"),
+                        sub1 if is_valid_subnational1(sub1) else None,
                         hs.get("subnational2Code"),
+                        get_region_code(hs),
                         hs.get("lat"),
                         hs.get("lng"),
                         hs.get("numSpeciesAllTime"),
@@ -147,9 +177,9 @@ def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: d
         except requests.RequestException as e:
             log(f"    [{i+1}/{len(countries)}] {country_name}: Error - {e}")
 
-        # 5 second pause between countries (except after the last one)
+        # 2 second pause between countries (except after the last one)
         if i < len(countries) - 1:
-            time.sleep(5)
+            time.sleep(2)
 
     return total_hotspots
 
@@ -177,11 +207,17 @@ def build_database(
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
     skip_hotspots: bool = False,
+    wilson_z: float = 1.96,
 ) -> None:
     """
     Build the month_obs database from eBird species file.
     """
     start_time = time.time()
+
+    # Wilson score constants derived from z-index
+    z_sq = wilson_z * wilson_z
+    z_sq_half = z_sq / 2
+    z_sq_quarter = z_sq / 4
 
     # Load API key from .env (only needed for hotspots download)
     api_key = None
@@ -335,9 +371,9 @@ def build_database(
                 sp.id,
                 o.obs,
                 o.samples,
-                -- Wilson score lower bound (z=1.96 for 95% confidence)
-                (o.obs + 1.9208 - 1.96 * sqrt(o.obs * (o.samples - o.obs) / o.samples + 0.9604))
-                    / (o.samples + 3.8416) AS score
+                -- Wilson score lower bound (z={wilson_z})
+                (o.obs + {z_sq_half} - {wilson_z} * sqrt(o.obs * (o.samples - o.obs) / o.samples + {z_sq_quarter}))
+                    / (o.samples + {z_sq}) AS score
             FROM observations_agg o
             JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
             WHERE o.month = {month} AND o.obs > 1
@@ -364,16 +400,16 @@ def build_database(
         )
     """)
 
-    con.execute("""
+    con.execute(f"""
         INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples, score)
         SELECT
             location_id,
             species_id,
             SUM(obs) AS obs,
             SUM(samples) AS samples,
-            -- Wilson score lower bound (z=1.96 for 95% confidence)
-            (SUM(obs) + 1.9208 - 1.96 * sqrt(SUM(obs) * (SUM(samples) - SUM(obs)) / SUM(samples) + 0.9604))
-                / (SUM(samples) + 3.8416) AS score
+            -- Wilson score lower bound (z={wilson_z})
+            (SUM(obs) + {z_sq_half} - {wilson_z} * sqrt(SUM(obs) * (SUM(samples) - SUM(obs)) / SUM(samples) + {z_sq_quarter}))
+                / (SUM(samples) + {z_sq}) AS score
         FROM sqlite_db.month_obs
         GROUP BY location_id, species_id
         HAVING SUM(obs) > 1
@@ -425,6 +461,7 @@ def build_database(
             "CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)",
             "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
             "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)",
+            "CREATE INDEX IF NOT EXISTS idx_hotspots_region ON hotspots(region_code)",
         ])
 
     sqlite_con = sqlite3.connect(output_db)
@@ -495,6 +532,12 @@ Examples:
         action="store_true",
         help="Skip downloading hotspots from eBird API",
     )
+    parser.add_argument(
+        "--wilson-z",
+        type=float,
+        default=1.96,
+        help="Z-index for Wilson score calculation (default: 1.96 for 95%% confidence)",
+    )
 
     args = parser.parse_args()
 
@@ -513,6 +556,7 @@ Examples:
         memory_limit=args.memory_limit,
         threads=args.threads,
         skip_hotspots=args.skip_hotspots,
+        wilson_z=args.wilson_z,
     )
 
 
