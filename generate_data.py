@@ -303,9 +303,9 @@ def build_database(
         )
     """)
 
-    # Step 3: Calculate samples per (location, month) from sampling file
+    # Step 3: Calculate samples per (location, month) and (location, year) from sampling file
     step_num += 1
-    print(f"\nStep {step_num}/{total_steps}: Calculating samples per location/month...")
+    print(f"\nStep {step_num}/{total_steps}: Calculating samples per location...")
     step_start = time.time()
     con.execute(f"""
         CREATE TEMP TABLE samples_agg AS
@@ -321,6 +321,15 @@ def build_database(
             ignore_errors=true
         )
         GROUP BY location_id, month
+    """)
+    # Also create yearly samples aggregation
+    con.execute("""
+        CREATE TEMP TABLE year_samples_agg AS
+        SELECT
+            location_id,
+            SUM(samples) AS samples
+        FROM samples_agg
+        GROUP BY location_id
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
@@ -406,17 +415,24 @@ def build_database(
     con.execute(f"""
         INSERT INTO sqlite_db.year_obs (location_id, species_id, obs, samples, score)
         SELECT
-            o.location_id,
-            sp.id AS species_id,
-            SUM(o.obs) AS obs,
-            SUM(o.samples) AS samples,
+            agg.location_id,
+            agg.species_id,
+            agg.obs,
+            ys.samples,
             -- Wilson score lower bound (z={wilson_z})
-            (SUM(o.obs) + {z_sq_half} - {wilson_z} * sqrt(SUM(o.obs) * (SUM(o.samples) - SUM(o.obs)) / SUM(o.samples) + {z_sq_quarter}))
-                / (SUM(o.samples) + {z_sq}) AS score
-        FROM observations_agg o
-        JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
-        GROUP BY o.location_id, sp.id
-        HAVING SUM(o.obs) > 1
+            (agg.obs + {z_sq_half} - {wilson_z} * sqrt(agg.obs * (ys.samples - agg.obs) / ys.samples + {z_sq_quarter}))
+                / (ys.samples + {z_sq}) AS score
+        FROM (
+            SELECT
+                o.location_id,
+                sp.id AS species_id,
+                SUM(o.obs) AS obs
+            FROM observations_agg o
+            JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
+            GROUP BY o.location_id, sp.id
+            HAVING SUM(o.obs) > 1
+        ) agg
+        JOIN year_samples_agg ys ON agg.location_id = ys.location_id
     """)
 
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
