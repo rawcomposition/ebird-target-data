@@ -18,13 +18,18 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Copy the example environment file and add your eBird API key (get one at https://ebird.org/api/keygen):
+Optionally copy the example environment file to configure settings:
 
 ```bash
 cp .env.example .env
 ```
 
-Optional: Add an [ntfy.sh](https://ntfy.sh) topic to `NTFY_NOTIFICATION_TOPIC` to receive notifications when CLI operations complete.
+Optional settings:
+
+- `NTFY_NOTIFICATION_TOPIC` - Add an [ntfy.sh](https://ntfy.sh) topic to receive notifications when CLI operations complete
+- `MEMORY_LIMIT` - DuckDB memory limit in GB (default: 24)
+- `THREADS` - Number of threads for DuckDB (default: 8)
+- `WILSON_SCORE_Z_INDEX` - Z-index for Wilson score calculation (default: 1.96)
 
 ## Usage
 
@@ -46,7 +51,6 @@ The CLI will prompt you to:
    - **Extract Sampling Archive** - Extract the gzipped sampling data file from the tar
    - **Filter Sampling Dataset** - Extract required columns and filter to hotspots/complete checklists
    - **Build SQLite Database** - Generate the final SQLite database
-   - **Build SQLite Database (skip hotspots)** - Generate the database without downloading hotspots from the eBird API
    - **All** - Run all steps in sequence
 
 Each step skips automatically if its output file already exists. Delete the file to re-run that step.
@@ -65,10 +69,11 @@ CREATE TABLE species (
     sci_name TEXT NOT NULL,      -- Scientific name
     name TEXT NOT NULL,          -- Common name
     code TEXT NOT NULL UNIQUE,   -- eBird species code
-    taxon_order INTEGER NOT NULL -- Taxonomic order
+    taxon_order INTEGER NOT NULL,-- Taxonomic order
+    search_codes TEXT            -- Banding codes + common name codes (space-separated)
 );
 
--- Hotspot locations from eBird API
+-- Hotspots
 CREATE TABLE hotspots (
     id TEXT PRIMARY KEY,          -- eBird location ID (e.g., L1234567)
     name TEXT,
@@ -77,9 +82,7 @@ CREATE TABLE hotspots (
     subnational2_code TEXT,       -- County
     region_code TEXT,             -- Most specific valid region code
     lat REAL,
-    lng REAL,
-    num_species INTEGER,          -- All-time species count
-    num_checklists INTEGER        -- All-time checklist count
+    lng REAL
 );
 
 -- Aggregated monthly observations
@@ -159,7 +162,7 @@ LIMIT 200;
 - Group checklists are deduplicated (multiple observers = 1 sampling)
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
 - Only location/species combinations with at least 2 observations are included
-- Hotspots are downloaded via eBird API with 5 second delays between countries
+- Hotspots are extracted from the sampling data (not downloaded from eBird API)
 - Taxonomy is downloaded from eBird API
 - The `region_code` column contains the most specific valid region: subnational2 > subnational1 > country (some eBird subnational1 codes are invalid like "CO-", so these fall back to country)
 - The `score` column uses the Wilson score lower bound formula:

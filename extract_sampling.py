@@ -19,12 +19,18 @@ from pathlib import Path
 
 from utils import format_duration, format_size
 
-# Columns needed for sample calculation
+# Columns needed for sample calculation and hotspot extraction
 REQUIRED_COLUMNS = [
     "LOCALITY ID",
+    "LOCALITY",
     "OBSERVATION DATE",
     "SAMPLING EVENT IDENTIFIER",
     "GROUP IDENTIFIER",
+    "COUNTRY CODE",
+    "STATE CODE",
+    "COUNTY CODE",
+    "LATITUDE",
+    "LONGITUDE",
 ]
 
 

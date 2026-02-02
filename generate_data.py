@@ -15,22 +15,19 @@ For very large files (100+ GB), you may want to:
     - Use --temp-dir to specify a fast SSD for intermediate data
     - Use --memory-limit to control DuckDB's memory usage (default: 80% of RAM)
     - Use --threads to control parallelism (default: all cores)
-    - Use --skip-hotspots to skip hotspot downloads
 """
 
 import argparse
-import os
 import sqlite3
 import sys
 import time
 from pathlib import Path
-from threading import Thread, Lock
 from typing import Optional
 
 import duckdb
 import requests
 
-from utils import format_duration, load_env_file
+from utils import format_duration
 
 
 def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
@@ -52,152 +49,28 @@ def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
             sci_name TEXT NOT NULL,
             name TEXT NOT NULL,
             code TEXT NOT NULL UNIQUE,
-            taxon_order INTEGER NOT NULL
+            taxon_order INTEGER NOT NULL,
+            search_codes TEXT
         )
     """)
 
     # Insert species
     for i, sp in enumerate(taxonomy, start=1):
+        # Merge bandingCodes and comNameCodes into space-separated search_codes
+        codes = []
+        if sp.get("bandingCodes"):
+            codes.extend(sp["bandingCodes"])
+        if sp.get("comNameCodes"):
+            codes.extend(sp["comNameCodes"])
+        search_codes = " ".join(codes) if codes else None
+
         sqlite_con.execute(
-            "INSERT INTO species (id, sci_name, name, code, taxon_order) VALUES (?, ?, ?, ?, ?)",
-            (i, sp["sciName"], sp["comName"], sp["speciesCode"], sp["taxonOrder"])
+            "INSERT INTO species (id, sci_name, name, code, taxon_order, search_codes) VALUES (?, ?, ?, ?, ?, ?)",
+            (i, sp["sciName"], sp["comName"], sp["speciesCode"], sp["taxonOrder"], search_codes)
         )
 
     sqlite_con.commit()
     return len(taxonomy)
-
-
-def is_valid_subnational1(code: str) -> bool:
-    """
-    Check if a subnational1 code is valid.
-    Some eBird codes are malformed (e.g., "CO-" instead of "CO-DC").
-    Valid codes have content after the dash.
-    """
-    if not code:
-        return False
-    parts = code.split("-", 1)
-    return len(parts) > 1 and bool(parts[1])
-
-
-def get_region_code(hs: dict) -> str:
-    """
-    Get the most specific valid region code for a hotspot.
-    Returns subnational2_code > subnational1_code > country_code.
-    """
-    if hs.get("subnational2Code"):
-        return hs["subnational2Code"]
-
-    sub1 = hs.get("subnational1Code")
-    if is_valid_subnational1(sub1):
-        return sub1
-
-    return hs.get("countryCode")
-
-
-def download_hotspots(api_key: str, sqlite_con: sqlite3.Connection, log_state: dict) -> int:
-    """
-    Download all eBird hotspots by country and insert into hotspots table.
-    Returns the number of hotspots inserted.
-
-    log_state dict contains:
-        - buffer: list of messages to buffer
-        - live: bool, when True print directly instead of buffering
-        - lock: threading.Lock for thread safety
-    """
-    def log(msg: str):
-        with log_state["lock"]:
-            if log_state["live"]:
-                print(msg)
-            else:
-                log_state["buffer"].append(msg)
-
-    # Get country list
-    countries_url = f"https://api.ebird.org/v2/ref/region/list/country/world?fmt=json&key={api_key}"
-    response = requests.get(countries_url, timeout=60)
-    response.raise_for_status()
-    countries = response.json()
-
-    # Create hotspots table
-    sqlite_con.execute("DROP TABLE IF EXISTS hotspots")
-    sqlite_con.execute("""
-        CREATE TABLE hotspots (
-            id TEXT PRIMARY KEY,
-            name TEXT,
-            country_code TEXT,
-            subnational1_code TEXT,
-            subnational2_code TEXT,
-            region_code TEXT,
-            lat REAL,
-            lng REAL,
-            num_species INTEGER,
-            num_checklists INTEGER
-        )
-    """)
-    sqlite_con.commit()
-
-    total_hotspots = 0
-
-    for i, country in enumerate(countries):
-        country_code = country["code"]
-        country_name = country["name"]
-
-        # Download hotspots for this country
-        hotspots_url = f"https://api.ebird.org/v2/ref/hotspot/{country_code}?fmt=json&key={api_key}"
-        try:
-            response = requests.get(hotspots_url, timeout=60)
-            response.raise_for_status()
-            hotspots = response.json()
-
-            # Insert hotspots
-            for hs in hotspots:
-                sub1 = hs.get("subnational1Code")
-                sqlite_con.execute(
-                    """INSERT INTO hotspots
-                       (id, name, country_code, subnational1_code, subnational2_code,
-                        region_code, lat, lng, num_species, num_checklists)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        hs.get("locId"),
-                        hs.get("locName"),
-                        hs.get("countryCode"),
-                        sub1 if is_valid_subnational1(sub1) else None,
-                        hs.get("subnational2Code"),
-                        get_region_code(hs),
-                        hs.get("lat"),
-                        hs.get("lng"),
-                        hs.get("numSpeciesAllTime"),
-                        hs.get("numChecklistsAllTime"),
-                    )
-                )
-
-            sqlite_con.commit()
-            total_hotspots += len(hotspots)
-            log(f"    [{i+1}/{len(countries)}] {country_name}: {len(hotspots):,} hotspots")
-
-        except requests.RequestException as e:
-            log(f"    [{i+1}/{len(countries)}] {country_name}: Error - {e}")
-
-        # 2 second pause between countries (except after the last one)
-        if i < len(countries) - 1:
-            time.sleep(2)
-
-    return total_hotspots
-
-
-def download_hotspots_background(api_key: str, output_db: Path, result_container: dict, log_state: dict) -> None:
-    """
-    Background thread function to download hotspots.
-    Stores result in result_container dict.
-    """
-    try:
-        sqlite_con = sqlite3.connect(output_db)
-        count = download_hotspots(api_key, sqlite_con, log_state)
-        sqlite_con.close()
-        result_container["count"] = count
-        result_container["error"] = None
-    except Exception as e:
-        result_container["count"] = 0
-        result_container["error"] = str(e)
 
 
 def build_database(
@@ -207,7 +80,6 @@ def build_database(
     temp_dir: Optional[Path] = None,
     memory_limit: Optional[str] = None,
     threads: Optional[int] = None,
-    skip_hotspots: bool = False,
     wilson_z: float = 1.96,
 ) -> None:
     """
@@ -219,15 +91,6 @@ def build_database(
     z_sq = wilson_z * wilson_z
     z_sq_half = z_sq / 2
     z_sq_quarter = z_sq / 4
-
-    # Load API key from .env (only needed for hotspots download)
-    api_key = None
-    if not skip_hotspots:
-        env_vars = load_env_file()
-        api_key = env_vars.get("EBIRD_API_KEY") or os.environ.get("EBIRD_API_KEY")
-
-        if not api_key:
-            print("Warning: EBIRD_API_KEY not found in .env or environment. Skipping hotspots download.")
 
     # Configure DuckDB for large file processing
     config = {}
@@ -255,15 +118,10 @@ def build_database(
     if threads:
         print(f"Threads: {threads}")
 
-    # Determine number of steps based on skip_hotspots
-    total_steps = 6 if skip_hotspots else 7
+    total_steps = 8
     step_num = 0
 
-    # Step 1: Download taxonomy (always required for species table)
-    hotspot_result = {"count": 0, "error": None}
-    hotspot_log_state = {"buffer": [], "live": False, "lock": Lock()}
-    hotspot_thread = None
-
+    # Step 1: Download taxonomy
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Downloading eBird taxonomy...")
     step_start = time.time()
@@ -272,28 +130,15 @@ def build_database(
     sqlite_con.close()
     print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
 
-    # Step 2: Start hotspots download in background (takes ~17+ minutes due to rate limiting)
-    if not skip_hotspots:
-        step_num += 1
-        if api_key:
-            print(f"\nStep {step_num}/{total_steps}: Downloading hotspots in background...")
-            hotspot_thread = Thread(
-                target=download_hotspots_background,
-                args=(api_key, output_db, hotspot_result, hotspot_log_state),
-                daemon=True
-            )
-            hotspot_thread.start()
-        else:
-            print(f"\nStep {step_num}/{total_steps}: Skipping hotspots download (no API key)")
-
     # Attach SQLite database for output
     con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
 
-    # Create month_obs table in SQLite (drop existing if re-running)
+    # Create staging table for fast inserts (no constraints)
+    con.execute("DROP TABLE IF EXISTS sqlite_db.month_obs_staging")
     con.execute("DROP TABLE IF EXISTS sqlite_db.month_obs")
 
     con.execute("""
-        CREATE TABLE sqlite_db.month_obs (
+        CREATE TABLE sqlite_db.month_obs_staging (
             location_id TEXT NOT NULL,
             month INTEGER NOT NULL,
             species_id INTEGER NOT NULL,
@@ -303,7 +148,7 @@ def build_database(
         )
     """)
 
-    # Step 3: Calculate samples per (location, month) and (location, year) from sampling file
+    # Step 2: Calculate samples per (location, month) and (location, year) from sampling file
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Calculating samples per location...")
     step_start = time.time()
@@ -333,7 +178,7 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 4: Calculate observations and join with samples
+    # Step 3: Calculate observations and join with samples
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Calculating observations...")
     step_start = time.time()
@@ -366,7 +211,7 @@ def build_database(
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 5: Insert into SQLite by month for progress tracking
+    # Step 4: Insert into SQLite by month for progress tracking
     # Join with species table to get species_id
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Inserting month_obs into SQLite...")
@@ -375,7 +220,7 @@ def build_database(
     for month in range(1, 13):
         month_start = time.time()
         con.execute(f"""
-            INSERT INTO sqlite_db.month_obs (location_id, month, species_id, obs, samples, score)
+            INSERT INTO sqlite_db.month_obs_staging (location_id, month, species_id, obs, samples, score)
             SELECT
                 o.location_id,
                 o.month,
@@ -389,13 +234,13 @@ def build_database(
             JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
             WHERE o.month = {month} AND o.obs > 1
         """)
-        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs WHERE month = {month}").fetchone()[0]
+        month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs_staging WHERE month = {month}").fetchone()[0]
         total_rows += month_count
         if month_count > 0:
             print(f"  Month {month:2d}: {month_count:,} rows ({format_duration(time.time() - month_start)})")
     print(f"  Total: {total_rows:,} rows ({format_duration(time.time() - step_start)})")
 
-    # Step 6: Create and populate year_obs table
+    # Step 5: Create and populate year_obs table
     # Aggregate from observations_agg (not month_obs) to avoid losing data filtered at month level
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating year_obs table...")
@@ -438,31 +283,111 @@ def build_database(
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
     print(f"  Created {year_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
+    # Step 6: Extract hotspots from sampling data
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Extracting hotspots from sampling data...")
+    step_start = time.time()
+
+    con.execute("DROP TABLE IF EXISTS sqlite_db.hotspots")
+    con.execute("""
+        CREATE TABLE sqlite_db.hotspots (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            country_code TEXT,
+            subnational1_code TEXT,
+            subnational2_code TEXT,
+            region_code TEXT,
+            lat REAL,
+            lng REAL
+        )
+    """)
+
+    # Extract unique locations from sampling data
+    # Filter out invalid subnational1 codes (e.g., "CO-" without state)
+    # Set region_code to most specific available: subnational2 > subnational1 > country
+    con.execute(f"""
+        INSERT INTO sqlite_db.hotspots (id, name, country_code, subnational1_code, subnational2_code, region_code, lat, lng)
+        SELECT
+            "LOCALITY ID" AS id,
+            MAX("LOCALITY") AS name,
+            MAX("COUNTRY CODE") AS country_code,
+            CASE
+                WHEN MAX("STATE CODE") IS NOT NULL
+                     AND MAX("STATE CODE") != ''
+                     AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
+                THEN MAX("STATE CODE")
+                ELSE NULL
+            END AS subnational1_code,
+            NULLIF(MAX("COUNTY CODE"), '') AS subnational2_code,
+            -- region_code: most specific available
+            COALESCE(
+                NULLIF(MAX("COUNTY CODE"), ''),
+                CASE
+                    WHEN MAX("STATE CODE") IS NOT NULL
+                         AND MAX("STATE CODE") != ''
+                         AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
+                    THEN MAX("STATE CODE")
+                    ELSE NULL
+                END,
+                MAX("COUNTRY CODE")
+            ) AS region_code,
+            MAX("LATITUDE") AS lat,
+            MAX("LONGITUDE") AS lng
+        FROM read_csv(
+            '{sampling_file}',
+            delim='\t',
+            header=true,
+            quote='',
+            ignore_errors=true
+        )
+        GROUP BY "LOCALITY ID"
+    """)
+
+    hotspot_count = con.execute("SELECT COUNT(*) FROM sqlite_db.hotspots").fetchone()[0]
+    print(f"  Extracted {hotspot_count:,} locations ({format_duration(time.time() - step_start)})")
+
     # Get summary statistics from DuckDB before closing
-    obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs").fetchone()[0]
-    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs").fetchone()[0]
-    species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM sqlite_db.month_obs").fetchone()[0]
+    obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.month_obs_staging").fetchone()[0]
+    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM sqlite_db.month_obs_staging").fetchone()[0]
+    species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM sqlite_db.month_obs_staging").fetchone()[0]
 
     con.close()
 
-    # Wait for hotspots download to complete
-    if hotspot_thread:
-        if hotspot_thread.is_alive():
-            print("\n  Waiting for hotspots download to complete...")
-            with hotspot_log_state["lock"]:
-                for msg in hotspot_log_state["buffer"]:
-                    print(msg)
-                hotspot_log_state["buffer"].clear()
-                hotspot_log_state["live"] = True
+    # Step 7: Convert staging table to WITHOUT ROWID table with PRIMARY KEY
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Converting month_obs to WITHOUT ROWID table...")
+    step_start = time.time()
 
-        hotspot_thread.join()
+    sqlite_con = sqlite3.connect(output_db)
 
-        if hotspot_result["error"]:
-            print(f"  Hotspots download error: {hotspot_result['error']}")
-        else:
-            print(f"  Hotspots complete: {hotspot_result['count']:,} hotspots")
+    # Create the final WITHOUT ROWID table with PRIMARY KEY
+    sqlite_con.execute("""
+        CREATE TABLE month_obs (
+            location_id TEXT NOT NULL,
+            month INTEGER NOT NULL,
+            species_id INTEGER NOT NULL,
+            obs INTEGER NOT NULL,
+            samples INTEGER NOT NULL,
+            score REAL NOT NULL,
+            PRIMARY KEY (location_id, month, species_id)
+        ) WITHOUT ROWID
+    """)
 
-    # Step 7: Create indexes using sqlite3
+    # Copy data from staging table (SQLite builds the B-tree efficiently in one pass)
+    sqlite_con.execute("""
+        INSERT INTO month_obs (location_id, month, species_id, obs, samples, score)
+        SELECT location_id, month, species_id, obs, samples, score
+        FROM month_obs_staging
+    """)
+
+    # Drop the staging table
+    sqlite_con.execute("DROP TABLE month_obs_staging")
+    sqlite_con.commit()
+    sqlite_con.close()
+
+    print(f"  Done ({format_duration(time.time() - step_start)})")
+
+    # Step 8: Create indexes using sqlite3
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating indexes...")
     step_start = time.time()
@@ -471,18 +396,13 @@ def build_database(
         # Species-based queries (sorted by score)
         "CREATE INDEX IF NOT EXISTS idx_mo_species_score ON month_obs(species_id, score DESC)",
         "CREATE INDEX IF NOT EXISTS idx_yo_species_score ON year_obs(species_id, score DESC)",
-        # Location-based queries (finding species at a hotspot, no score sorting)
-        "CREATE INDEX IF NOT EXISTS idx_mo_location ON month_obs(location_id, month, species_id)",
-        "CREATE INDEX IF NOT EXISTS idx_yo_location ON year_obs(location_id, species_id)",
+        # Hotspot indexes
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)",
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)",
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_region ON hotspots(region_code)",
+        # Note: location-based queries for month_obs are covered by the PRIMARY KEY and WITHOUT ROWID optimizations
     ]
-
-    if not skip_hotspots:
-        indexes.extend([
-            "CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)",
-            "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
-            "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)",
-            "CREATE INDEX IF NOT EXISTS idx_hotspots_region ON hotspots(region_code)",
-        ])
 
     sqlite_con = sqlite3.connect(output_db)
     for index_sql in indexes:
@@ -500,7 +420,7 @@ def build_database(
     print(f"  Total year_obs rows: {year_obs_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")
-    print(f"  Hotspots: {hotspot_result['count']:,}")
+    print(f"  Hotspots: {hotspot_count:,}")
     print(f"  Total time: {format_duration(total_time)}")
     print(f"\nDatabase written to: {output_db}")
 
@@ -517,9 +437,6 @@ Examples:
   # Large dataset with memory and temp directory settings
   python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db \\
       --memory-limit 24GB --threads 8
-
-  # Skip hotspots download
-  python generate_data.py ebd_filtered.tsv sampling_filtered.tsv output.db --skip-hotspots
         """,
     )
     parser.add_argument(
@@ -553,11 +470,6 @@ Examples:
         help="Number of threads for DuckDB (default: all cores)",
     )
     parser.add_argument(
-        "--skip-hotspots",
-        action="store_true",
-        help="Skip downloading hotspots from eBird API",
-    )
-    parser.add_argument(
         "--wilson-z",
         type=float,
         default=1.96,
@@ -585,7 +497,6 @@ Examples:
         temp_dir=args.temp_dir,
         memory_limit=args.memory_limit,
         threads=args.threads,
-        skip_hotspots=args.skip_hotspots,
         wilson_z=args.wilson_z,
     )
 

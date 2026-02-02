@@ -460,7 +460,7 @@ def run_filter_sampling(paths: dict) -> bool:
         return False
 
 
-def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bool:
+def run_build_db(paths: dict, env_vars: dict) -> bool:
     """
     Build the SQLite database.
     Returns True if successful, False otherwise.
@@ -470,10 +470,7 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
     db_file = paths["db"]
 
     print("\n" + "-" * 50)
-    if skip_hotspots:
-        print("Step: Build SQLite Database (skipping hotspots)")
-    else:
-        print("Step: Build SQLite Database")
+    print("Step: Build SQLite Database")
     print("-" * 50)
     sys.stdout.flush()
 
@@ -502,8 +499,6 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
     print(f"Memory limit: {memory_limit}GB")
     print(f"Threads: {threads}")
     print(f"Wilson z-index: {wilson_z}")
-    if skip_hotspots:
-        print("Skipping hotspots download")
     print()
     sys.stdout.flush()
 
@@ -519,8 +514,6 @@ def run_build_db(paths: dict, env_vars: dict, skip_hotspots: bool = False) -> bo
         "--threads", threads,
         "--wilson-z", wilson_z,
     ]
-    if skip_hotspots:
-        cmd.append("--skip-hotspots")
 
     try:
         subprocess.run(cmd, check=True)
@@ -584,7 +577,6 @@ def main():
         "Extract Sampling Archive",
         "Filter Sampling Dataset",
         "Build SQLite Database",
-        "Build SQLite Database (skip hotspots)",
         "All (Run all steps)",
     ]
 
@@ -610,8 +602,6 @@ def main():
         success = run_filter_sampling(paths)
     elif op_idx == 6:
         success = run_build_db(paths, env_vars)
-    elif op_idx == 7:
-        success = run_build_db(paths, env_vars, skip_hotspots=True)
     else:
         success = run_all_steps(paths, env_vars)
 
