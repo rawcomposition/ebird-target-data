@@ -232,7 +232,7 @@ def build_database(
                     / (o.samples + {z_sq}) AS score
             FROM observations_agg o
             JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
-            WHERE o.month = {month} AND o.obs > 1
+            WHERE o.month = {month}
         """)
         month_count = con.execute(f"SELECT COUNT(*) FROM sqlite_db.month_obs_staging WHERE month = {month}").fetchone()[0]
         total_rows += month_count
@@ -275,7 +275,6 @@ def build_database(
             FROM observations_agg o
             JOIN sqlite_db.species sp ON o.scientific_name = sp.sci_name
             GROUP BY o.location_id, sp.id
-            HAVING SUM(o.obs) > 1
         ) agg
         JOIN year_samples_agg ys ON agg.location_id = ys.location_id
     """)
