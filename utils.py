@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared utility functions for eBird Target Species Aggregator.
+Shared utility functions for EBD Aggregator.
 """
 
 from pathlib import Path

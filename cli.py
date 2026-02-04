@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interactive CLI for eBird Target Species Aggregator.
+Interactive CLI for eBird Basic Dataset Aggregator.
 
 Downloads and processes eBird Basic Dataset to build a SQLite database
 of bird observation statistics.
@@ -128,7 +128,7 @@ def print_header():
     """Print CLI header."""
     print()
     print("=" * 50)
-    print("  eBird Target Species Aggregator")
+    print("  EBD Aggregator")
     print("=" * 50)
     print()
 
@@ -653,7 +653,6 @@ def run_upload_packs(
 
     try:
         subprocess.run(cmd, check=True)
-        print("\nUpload complete!")
         return True
     except subprocess.CalledProcessError as e:
         print(f"\nUpload failed: {e}")

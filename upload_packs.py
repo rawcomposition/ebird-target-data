@@ -28,6 +28,7 @@ def upload_packs(
     s3_secret: str,
     s3_bucket: str,
     s3_endpoint: str,
+    s3_dir: str = "",
 ) -> bool:
     """
     Upload packs to S3.
@@ -61,7 +62,10 @@ def upload_packs(
         endpoint_url=s3_endpoint,
         aws_access_key_id=s3_key_id,
         aws_secret_access_key=s3_secret,
-        config=Config(signature_version='s3v4'),
+        config=Config(
+            signature_version='s3v4',
+            s3={'addressing_style': 'path'},
+        ),
     )
 
     # Collect all files to upload
@@ -69,20 +73,30 @@ def upload_packs(
     total_files = len(pack_files) + 1  # +1 for index
     total_size = index_file.stat().st_size + sum(f.stat().st_size for f in pack_files)
 
-    print(f"\nUploading {total_files} files ({format_size(total_size)}) to {s3_bucket}")
+    # Build S3 key prefix
+    prefix = f"{s3_dir}/" if s3_dir else ""
+
+    print(f"\nUploading {total_files} files ({format_size(total_size)})")
+    print(f"Bucket: {s3_bucket}")
     print(f"Endpoint: {s3_endpoint}")
+    if s3_dir:
+        print(f"Directory: {s3_dir}/")
     print()
 
     uploaded = 0
     failed = 0
+    current = 0
 
-    # Upload index file (packs.json.gz) to root
+    # Upload index file (packs.json.gz)
+    current += 1
+    index_key = f"{prefix}packs.json.gz"
     try:
-        print(f"  Uploading packs.json.gz ({format_size(index_file.stat().st_size)})...")
+        size_str = format_size(index_file.stat().st_size)
+        print(f"  [{current}/{total_files}] Uploading {index_key} ({size_str})...")
         s3.upload_file(
             str(index_file),
             s3_bucket,
-            "packs.json.gz",
+            index_key,
             ExtraArgs={
                 'ContentType': 'application/json',
                 'ContentEncoding': 'gzip',
@@ -92,14 +106,18 @@ def upload_packs(
         uploaded += 1
     except Exception as e:
         print(f"    Failed: {e}")
+        if 'AccessDenied' in str(e):
+            print("\nAccess denied - check your S3 credentials and bucket permissions.")
+            return False
         failed += 1
 
     # Upload versioned pack files
     for pack_file in pack_files:
-        s3_key = f"{pack_version}/{pack_file.name}"
+        current += 1
+        s3_key = f"{prefix}{pack_version}/{pack_file.name}"
         try:
             size = pack_file.stat().st_size
-            print(f"  Uploading {s3_key} ({format_size(size)})...")
+            print(f"  [{current}/{total_files}] Uploading {s3_key} ({format_size(size)})...")
             s3.upload_file(
                 str(pack_file),
                 s3_bucket,
@@ -113,6 +131,9 @@ def upload_packs(
             uploaded += 1
         except Exception as e:
             print(f"    Failed: {e}")
+            if 'AccessDenied' in str(e):
+                print("\nAccess denied - check your S3 credentials and bucket permissions.")
+                return False
             failed += 1
 
     print()
@@ -148,6 +169,7 @@ def main():
     s3_secret = env_vars.get("S3_SECRET")
     s3_bucket = env_vars.get("S3_BUCKET")
     s3_endpoint = env_vars.get("S3_ENDPOINT")
+    s3_dir = env_vars.get("S3_DIR", "")
 
     missing = []
     if not s3_key_id:
@@ -174,6 +196,7 @@ def main():
         s3_secret=s3_secret,
         s3_bucket=s3_bucket,
         s3_endpoint=s3_endpoint,
+        s3_dir=s3_dir,
     )
 
     if success:
