@@ -27,11 +27,31 @@ from utils import load_env_file
 
 # Get script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
-DATASETS_DIR = SCRIPT_DIR / "datasets"
-OUTPUTS_DIR = SCRIPT_DIR / "output"
 
 
-def send_notification(topic: str, title: str, message: str, success: bool = True) -> None:
+def get_output_paths(env_vars: dict) -> tuple[Path, Path, Path]:
+    """
+    Get dataset, output, and packs directories based on OUTPUT_PATH env var.
+
+    Returns:
+        Tuple of (datasets_dir, outputs_dir, packs_dir)
+    """
+    output_path = env_vars.get("OUTPUT_PATH", "")
+    if output_path:
+        base_dir = (SCRIPT_DIR / output_path).resolve()
+    else:
+        base_dir = SCRIPT_DIR
+
+    datasets_dir = base_dir / "datasets"
+    outputs_dir = base_dir / "output"
+    packs_dir = outputs_dir / "packs"
+
+    return datasets_dir, outputs_dir, packs_dir
+
+
+def send_notification(
+    topic: str, title: str, message: str, success: bool = True
+) -> None:
     """Send a notification to an ntfy.sh topic."""
     emoji = "\u2705" if success else "\u274c"
     try:
@@ -49,7 +69,6 @@ def get_month_options() -> list[tuple[str, str, str]]:
     """
     Get the 3 most recent months as options.
     Returns list of (display_name, month_abbrev, year) tuples.
-    E.g., [("Jan 2026", "Jan", "2026"), ("Dec 2025", "Dec", "2025"), ...]
     """
     from dateutil.relativedelta import relativedelta
 
@@ -65,19 +84,14 @@ def get_month_options() -> list[tuple[str, str, str]]:
     return options
 
 
-def get_file_paths(month_abbrev: str, year: str) -> dict:
+def get_file_paths(
+    month_abbrev: str,
+    year: str,
+    datasets_dir: Path,
+    outputs_dir: Path
+) -> dict:
     """
     Get all file paths for a given month/year.
-    E.g., month_abbrev="Jan", year="2026" gives:
-    - tar: datasets/ebd-jan-2026.tar
-    - txt_gz: datasets/ebd-jan-2026.txt.gz
-    - filtered: datasets/ebd-jan-2026-filtered.tsv
-    - sampling_tar: datasets/ebd-sampling-jan-2026.tar
-    - sampling_txt_gz: datasets/ebd-sampling-jan-2026.txt.gz
-    - sampling_filtered: datasets/ebd-sampling-jan-2026-filtered.tsv
-    - db: output/targets-jan-2026.db
-    - ebird_release: ebd_relJan-2026 (for download URL and tar extraction)
-    - sampling_release: ebd_sampling_relJan-2026 (for sampling download URL and tar extraction)
     """
     month_lower = month_abbrev.lower()
     base_name = f"ebd-{month_lower}-{year}"
@@ -87,19 +101,26 @@ def get_file_paths(month_abbrev: str, year: str) -> dict:
 
     return {
         # Species observations
-        "tar": DATASETS_DIR / f"{base_name}.tar",
-        "txt_gz": DATASETS_DIR / f"{base_name}.txt.gz",
-        "filtered": DATASETS_DIR / f"{base_name}-filtered.tsv",
+        "tar": datasets_dir / f"{base_name}.tar",
+        "txt_gz": datasets_dir / f"{base_name}.txt.gz",
+        "filtered": datasets_dir / f"{base_name}-filtered.tsv",
         "ebird_release": ebird_release,
-        "download_url": f"https://download.ebird.org/ebd/prepackaged/{ebird_release}.tar",
+        "download_url": (
+            f"https://download.ebird.org/ebd/prepackaged/{ebird_release}.tar"
+        ),
         # Sampling (checklists)
-        "sampling_tar": DATASETS_DIR / f"{sampling_base}.tar",
-        "sampling_txt_gz": DATASETS_DIR / f"{sampling_base}.txt.gz",
-        "sampling_filtered": DATASETS_DIR / f"{sampling_base}-filtered.tsv",
+        "sampling_tar": datasets_dir / f"{sampling_base}.tar",
+        "sampling_txt_gz": datasets_dir / f"{sampling_base}.txt.gz",
+        "sampling_filtered": datasets_dir / f"{sampling_base}-filtered.tsv",
         "sampling_release": sampling_release,
-        "sampling_download_url": f"https://download.ebird.org/ebd/prepackaged/{sampling_release}.tar",
+        "sampling_download_url": (
+            f"https://download.ebird.org/ebd/prepackaged/{sampling_release}.tar"
+        ),
         # Output
-        "db": OUTPUTS_DIR / f"targets-{month_lower}-{year}.db",
+        "db": outputs_dir / f"targets-{month_lower}-{year}.db",
+        # Directories (for convenience)
+        "datasets_dir": datasets_dir,
+        "outputs_dir": outputs_dir,
     }
 
 
@@ -143,6 +164,7 @@ def run_download(paths: dict) -> bool:
     """
     tar_file = paths["tar"]
     download_url = paths["download_url"]
+    datasets_dir = paths["datasets_dir"]
 
     print("\n" + "-" * 50)
     print("Step: Download eBird Basic Dataset")
@@ -160,7 +182,7 @@ def run_download(paths: dict) -> bool:
     sys.stdout.flush()
 
     # Ensure datasets directory exists
-    DATASETS_DIR.mkdir(parents=True, exist_ok=True)
+    datasets_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         # Use aria2c for fast, resumable downloads
@@ -168,7 +190,7 @@ def run_download(paths: dict) -> bool:
             [
                 "caffeinate", "-dimsu",
                 "aria2c",
-                "-d", str(DATASETS_DIR),
+                "-d", str(datasets_dir),
                 "-o", tar_file.name,
                 "-c",  # Continue/resume download
                 "-x", "2",  # Max connections per server
@@ -190,7 +212,7 @@ def run_download(paths: dict) -> bool:
         print("eBird releases datasets around mid-month.")
         return False
     except FileNotFoundError:
-        print("\nError: aria2c not found. Please install it with: brew install aria2")
+        print("\nError: aria2c not found. Install it with: brew install aria2")
         return False
 
 
@@ -202,6 +224,7 @@ def run_extract(paths: dict) -> bool:
     tar_file = paths["tar"]
     txt_gz_file = paths["txt_gz"]
     ebird_release = paths["ebird_release"]
+    datasets_dir = paths["datasets_dir"]
 
     print("\n" + "-" * 50)
     print("Step: Extract Archive")
@@ -229,14 +252,14 @@ def run_extract(paths: dict) -> bool:
             [
                 "caffeinate", "-i",
                 "tar", "-xf", str(tar_file),
-                "-C", str(DATASETS_DIR),
+                "-C", str(datasets_dir),
                 f"{ebird_release}.txt.gz",
             ],
             check=True,
         )
 
         # Rename to our naming convention
-        extracted_file = DATASETS_DIR / f"{ebird_release}.txt.gz"
+        extracted_file = datasets_dir / f"{ebird_release}.txt.gz"
         if extracted_file.exists():
             extracted_file.rename(txt_gz_file)
             print(f"Extracted and renamed to: {txt_gz_file}")
@@ -305,6 +328,7 @@ def run_download_sampling(paths: dict) -> bool:
     """
     tar_file = paths["sampling_tar"]
     download_url = paths["sampling_download_url"]
+    datasets_dir = paths["datasets_dir"]
 
     print("\n" + "-" * 50)
     print("Step: Download eBird Sampling Dataset")
@@ -322,7 +346,7 @@ def run_download_sampling(paths: dict) -> bool:
     sys.stdout.flush()
 
     # Ensure datasets directory exists
-    DATASETS_DIR.mkdir(parents=True, exist_ok=True)
+    datasets_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         # Use aria2c for fast, resumable downloads
@@ -330,7 +354,7 @@ def run_download_sampling(paths: dict) -> bool:
             [
                 "caffeinate", "-dimsu",
                 "aria2c",
-                "-d", str(DATASETS_DIR),
+                "-d", str(datasets_dir),
                 "-o", tar_file.name,
                 "-c",  # Continue/resume download
                 "-x", "2",  # Max connections per server
@@ -352,7 +376,7 @@ def run_download_sampling(paths: dict) -> bool:
         print("eBird releases datasets around mid-month.")
         return False
     except FileNotFoundError:
-        print("\nError: aria2c not found. Please install it with: brew install aria2")
+        print("\nError: aria2c not found. Install it with: brew install aria2")
         return False
 
 
@@ -364,6 +388,7 @@ def run_extract_sampling(paths: dict) -> bool:
     tar_file = paths["sampling_tar"]
     txt_gz_file = paths["sampling_txt_gz"]
     sampling_release = paths["sampling_release"]
+    datasets_dir = paths["datasets_dir"]
 
     print("\n" + "-" * 50)
     print("Step: Extract Sampling Archive")
@@ -391,14 +416,14 @@ def run_extract_sampling(paths: dict) -> bool:
             [
                 "caffeinate", "-i",
                 "tar", "-xf", str(tar_file),
-                "-C", str(DATASETS_DIR),
+                "-C", str(datasets_dir),
                 f"{sampling_release}.txt.gz",
             ],
             check=True,
         )
 
         # Rename to our naming convention
-        extracted_file = DATASETS_DIR / f"{sampling_release}.txt.gz"
+        extracted_file = datasets_dir / f"{sampling_release}.txt.gz"
         if extracted_file.exists():
             extracted_file.rename(txt_gz_file)
             print(f"Extracted and renamed to: {txt_gz_file}")
@@ -468,6 +493,7 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
     filtered_file = paths["filtered"]
     sampling_file = paths["sampling_filtered"]
     db_file = paths["db"]
+    outputs_dir = paths["outputs_dir"]
 
     print("\n" + "-" * 50)
     print("Step: Build SQLite Database")
@@ -485,7 +511,7 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
         return False
 
     # Ensure output directory exists
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\nSpecies file: {filtered_file}")
     print(f"Sampling file: {sampling_file}")
@@ -524,7 +550,123 @@ def run_build_db(paths: dict, env_vars: dict) -> bool:
         return False
 
 
-def run_all_steps(paths: dict, env_vars: dict) -> bool:
+def run_generate_packs(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
+    """
+    Generate compressed JSON pack files for each region.
+    Returns True if successful, False otherwise.
+    """
+    db_file = paths["db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Generate Packs")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not db_file.exists():
+        print(f"\nError: Database file not found: {db_file}")
+        print("Please run the build database step first.")
+        return False
+
+    # Check for eBird API key
+    api_key = env_vars.get("EBIRD_API_KEY")
+    if not api_key:
+        print("\nError: EBIRD_API_KEY not found in .env")
+        print("Please add your eBird API key to the .env file.")
+        return False
+
+    print(f"\nDatabase: {db_file}")
+    print(f"Output directory: {packs_dir}")
+    print()
+    sys.stdout.flush()
+
+    generate_script = SCRIPT_DIR / "generate_packs.py"
+
+    cmd = [
+        "caffeinate", "-dims",
+        "python3", str(generate_script),
+        str(db_file),
+        "--output-dir", str(packs_dir),
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nPack generation complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nPack generation failed: {e}")
+        return False
+
+
+def run_upload_packs(
+    paths: dict, env_vars: dict, packs_dir: Path, pack_version: str
+) -> bool:
+    """
+    Upload packs to S3-compatible storage.
+    Returns True if successful, False otherwise.
+    """
+    print("\n" + "-" * 50)
+    print("Step: Upload Packs to S3")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    # Check for S3 credentials
+    missing = []
+    if not env_vars.get("S3_KEY_ID"):
+        missing.append("S3_KEY_ID")
+    if not env_vars.get("S3_SECRET"):
+        missing.append("S3_SECRET")
+    if not env_vars.get("S3_BUCKET"):
+        missing.append("S3_BUCKET")
+    if not env_vars.get("S3_ENDPOINT"):
+        missing.append("S3_ENDPOINT")
+
+    if missing:
+        print(f"\nError: Missing S3 credentials in .env: {', '.join(missing)}")
+        return False
+
+    # Check that packs exist
+    index_file = packs_dir / "packs.json.gz"
+    version_dir = packs_dir / pack_version
+
+    if not index_file.exists():
+        print(f"\nError: Index file not found: {index_file}")
+        print("Please run the generate packs step first.")
+        return False
+
+    if not version_dir.exists():
+        print(f"\nError: Version directory not found: {version_dir}")
+        print("Please run the generate packs step first.")
+        return False
+
+    print(f"\nPacks directory: {packs_dir}")
+    print(f"Pack version: {pack_version}")
+    print()
+    sys.stdout.flush()
+
+    upload_script = SCRIPT_DIR / "upload_packs.py"
+
+    cmd = [
+        "python3", str(upload_script),
+        str(packs_dir),
+        pack_version,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nUpload complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nUpload failed: {e}")
+        return False
+
+
+def run_all_steps(
+    paths: dict,
+    env_vars: dict,
+    packs_dir: Path,
+    pack_version: str,
+    upload: bool = False
+) -> bool:
     """
     Run all pipeline steps in sequence.
     Returns True if all steps succeed, exits on failure.
@@ -549,6 +691,15 @@ def run_all_steps(paths: dict, env_vars: dict) -> bool:
         print("\nAborting: Build database step failed.")
         sys.exit(1)
 
+    if not run_generate_packs(paths, env_vars, packs_dir):
+        print("\nAborting: Generate packs step failed.")
+        sys.exit(1)
+
+    if upload:
+        if not run_upload_packs(paths, env_vars, packs_dir, pack_version):
+            print("\nAborting: Upload packs step failed.")
+            sys.exit(1)
+
     return True
 
 
@@ -556,6 +707,9 @@ def main():
     print_header()
 
     env_vars = load_env_file()
+
+    # Get directories based on OUTPUT_PATH
+    datasets_dir, outputs_dir, packs_dir = get_output_paths(env_vars)
 
     # Step 1: Choose dataset month
     month_options = get_month_options()
@@ -566,18 +720,24 @@ def main():
         month_display
     )
     _, month_abbrev, year = month_options[month_idx]
-    paths = get_file_paths(month_abbrev, year)
+    paths = get_file_paths(month_abbrev, year, datasets_dir, outputs_dir)
+
+    # Derive pack version from month/year (e.g., "dec-2025")
+    pack_version = f"{month_abbrev.lower()}-{year}"
 
     # Step 2: Choose which operation to run
     operations = [
-        "Download Species Dataset",
-        "Extract Species Archive",
-        "Filter Species Dataset",
-        "Download Sampling Dataset",
-        "Extract Sampling Archive",
-        "Filter Sampling Dataset",
-        "Build SQLite Database",
-        "All (Run all steps)",
+        "Download Species",
+        "Extract Species",
+        "Filter Species",
+        "Download Sampling",
+        "Extract Sampling",
+        "Filter Sampling",
+        "Build Database",
+        "Generate Packs",
+        "Upload Packs",
+        "All (without upload)",
+        "All",
     ]
 
     print()
@@ -602,8 +762,14 @@ def main():
         success = run_filter_sampling(paths)
     elif op_idx == 6:
         success = run_build_db(paths, env_vars)
+    elif op_idx == 7:
+        success = run_generate_packs(paths, env_vars, packs_dir)
+    elif op_idx == 8:
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+    elif op_idx == 9:
+        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=False)
     else:
-        success = run_all_steps(paths, env_vars)
+        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=True)
 
     print()
     print("=" * 50)

@@ -1,6 +1,6 @@
-# eBird Target Species Aggregator
+# EBD Aggregator
 
-Builds a SQLite database of bird observation statistics from eBird Basic Dataset files. It allows querying for the best hotspots to find a given species, or the most likely species at a given hotspot.
+The eBird Basic Dataset (EBD) Aggregator is a bunch of scripts to aggregate the eBird data into a SQLite database and individual region pack files. This data is used on OpenBirding.org ([see repo](https://github.com/rawcomposition/openbirding)) and the OpenBirding mobile app ([see repo](https://github.com/rawcomposition/openbirding-rn)).
 
 ## Requirements
 
@@ -18,18 +18,26 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Optionally copy the example environment file to configure settings:
+Copy the example environment file and configure:
 
 ```bash
 cp .env.example .env
 ```
 
-Optional settings:
+### Environment Variables
 
-- `NTFY_NOTIFICATION_TOPIC` - Add an [ntfy.sh](https://ntfy.sh) topic to receive notifications when CLI operations complete
-- `MEMORY_LIMIT` - DuckDB memory limit in GB (default: 24)
-- `THREADS` - Number of threads for DuckDB (default: 8)
-- `WILSON_SCORE_Z_INDEX` - Z-index for Wilson score calculation (default: 1.96)
+| Variable                  | Required       | Default | Description                                        |
+| ------------------------- | -------------- | ------- | -------------------------------------------------- |
+| `OUTPUT_PATH`             | No             | -       | Base path for datasets and output directories      |
+| `EBIRD_API_KEY`           | For packs      | -       | eBird API key (required for Generate Packs)        |
+| `S3_KEY_ID`               | For packupload | -       | S3 access key ID                                   |
+| `S3_SECRET`               | For upload     | -       | S3 secret access key                               |
+| `S3_BUCKET`               | For upload     | -       | S3 bucket name                                     |
+| `S3_ENDPOINT`             | For upload     | -       | S3 endpoint URL                                    |
+| `MEMORY_LIMIT`            | No             | 24      | DuckDB memory limit in GB                          |
+| `THREADS`                 | No             | 8       | Number of threads for DuckDB                       |
+| `WILSON_SCORE_Z_INDEX`    | No             | 1.96    | Z-index for Wilson score calculation               |
+| `NTFY_NOTIFICATION_TOPIC` | No             | -       | [ntfy.sh](https://ntfy.sh) topic for notifications |
 
 ## Usage
 
@@ -44,129 +52,80 @@ The CLI will prompt you to:
 
 1. Choose which dataset to use (current or previous month)
 2. Choose which step to run:
-   - **Download Species Dataset** - Download the eBird Basic Dataset (species observations)
-   - **Extract Species Archive** - Extract the gzipped species data file from the tar
-   - **Filter Species Dataset** - Extract required columns and filter to hotspots/complete checklists
-   - **Download Sampling Dataset** - Download the eBird Sampling Dataset (all checklists)
-   - **Extract Sampling Archive** - Extract the gzipped sampling data file from the tar
-   - **Filter Sampling Dataset** - Extract required columns and filter to hotspots/complete checklists
-   - **Build SQLite Database** - Generate the final SQLite database
-   - **All** - Run all steps in sequence
+   - **Download Species** - Download the eBird Basic Dataset
+   - **Extract Species** - Extract the gzipped species data from the tar
+   - **Filter Species** - Extract required columns and filter to hotspots
+   - **Download Sampling** - Download the eBird Sampling Dataset
+   - **Extract Sampling** - Extract the gzipped sampling data from the tar
+   - **Filter Sampling** - Extract required columns and filter to hotspots
+   - **Build Database** - Generate the SQLite database
+   - **Generate Packs** - Generate compressed JSON packs for each region
+   - **Upload Packs** - Upload packs to S3-compatible storage
+   - **All (without upload)** - Run all steps except upload
+   - **All** - Run all steps including upload
 
-Each step skips automatically if its output file already exists. Delete the file to re-run that step.
+Each step skips automatically if its output file already exists.
 
-Files are stored in:
+### Output Structure
 
-- `datasets/` - Downloaded and intermediate data files
-- `output/` - Final SQLite databases
+```
+aggregator/
+├── datasets/           # Downloaded and intermediate data files
+└── output/
+    ├── targets-{month}-{year}.db
+    └── packs/
+        ├── packs.json.gz
+        └── {month}-{year}/
+            ├── US.json.gz
+            ├── US-CA.json.gz
+            └── ...
+```
 
-## Output Schema
+## Database Schema
 
 ```sql
--- Species taxonomy from eBird API
 CREATE TABLE species (
     id INTEGER PRIMARY KEY,
-    sci_name TEXT NOT NULL,      -- Scientific name
-    name TEXT NOT NULL,          -- Common name
-    code TEXT NOT NULL UNIQUE,   -- eBird species code
-    taxon_order INTEGER NOT NULL,-- Taxonomic order
-    search_codes TEXT            -- Banding codes + common name codes (space-separated)
+    sci_name TEXT NOT NULL,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL UNIQUE,
+    taxon_order INTEGER NOT NULL,
+    search_codes TEXT
 );
 
--- Hotspots
 CREATE TABLE hotspots (
-    id TEXT PRIMARY KEY,          -- eBird location ID (e.g., L1234567)
+    id TEXT PRIMARY KEY,
     name TEXT,
     country_code TEXT,
-    subnational1_code TEXT,       -- State/province
-    subnational2_code TEXT,       -- County
-    region_code TEXT,             -- Most specific valid region code
+    subnational1_code TEXT,
+    subnational2_code TEXT,
+    region_code TEXT,
     lat REAL,
     lng REAL
 );
 
--- Aggregated monthly observations
 CREATE TABLE month_obs (
     location_id TEXT NOT NULL,
-    month INTEGER NOT NULL,       -- 1-12
+    month INTEGER NOT NULL,
     species_id INTEGER NOT NULL,
-    obs INTEGER NOT NULL,         -- Times species was seen
-    samples INTEGER NOT NULL,     -- Total checklists at location/month
-    score REAL NOT NULL           -- Wilson score lower bound for ranking
+    obs INTEGER NOT NULL,
+    samples INTEGER NOT NULL,
+    score REAL NOT NULL
 );
 
--- Aggregated yearly observations (for faster year-round queries)
 CREATE TABLE year_obs (
     location_id TEXT NOT NULL,
     species_id INTEGER NOT NULL,
-    obs INTEGER NOT NULL,         -- Times species was seen (all months)
-    samples INTEGER NOT NULL,     -- Total checklists at location (all months)
-    score REAL NOT NULL           -- Wilson score lower bound for ranking
+    obs INTEGER NOT NULL,
+    samples INTEGER NOT NULL,
+    score REAL NOT NULL
 );
-```
-
-## Example Queries
-
-### Best locations to find a species (year-round)
-
-```sql
-SELECT
-    y.location_id,
-    y.obs,
-    y.samples,
-    ROUND(100.0 * y.obs / y.samples, 1) AS chance_pct
-FROM year_obs y
-WHERE y.species_id = 1961
-  AND y.samples >= 5
-ORDER BY chance_pct DESC
-LIMIT 200;
-```
-
-### Best locations to find a species in March
-
-```sql
-SELECT
-    m.location_id,
-    m.obs,
-    m.samples,
-    ROUND(100.0 * m.obs / m.samples, 1) AS chance_pct
-FROM month_obs m
-WHERE m.species_id = 3781
-  AND m.month = 3
-  AND m.samples >= 5
-ORDER BY chance_pct DESC;
-```
-
-### Best locations to find a species in Canada (year-round)
-
-```sql
-SELECT
-    y.location_id,
-    y.obs,
-    y.samples,
-    ROUND(100.0 * y.obs / y.samples, 1) AS chance_pct
-FROM year_obs y
-JOIN hotspots h ON h.id = y.location_id
-WHERE y.species_id = 1961
-  AND h.country_code = 'CA'
-  AND y.samples >= 5
-ORDER BY chance_pct DESC
-LIMIT 200;
 ```
 
 ## Notes
 
 - Only includes hotspot locations (`LOCALITY TYPE = H`)
 - Only includes complete checklists (`ALL SPECIES REPORTED = 1`)
-- Sample counts (total checklists) are calculated from the eBird Sampling Dataset, ensuring accurate counts even for locations with only non-species-level observations
-- Group checklists are deduplicated (multiple observers = 1 sampling)
+- Group checklists are deduplicated
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
-- Only location/species combinations with at least 2 observations are included
-- Hotspots are extracted from the sampling data (not downloaded from eBird API)
-- Taxonomy is downloaded from eBird API
-- The `region_code` column contains the most specific valid region: subnational2 > subnational1 > country (some eBird subnational1 codes are invalid like "CO-", so these fall back to country)
-- The `score` column uses the Wilson score lower bound formula:
-  ```
-  (obs + z²/2 - z * sqrt(obs * (samples - obs) / samples + z²/4)) / (samples + z²)
-  ```
-  The z-index is configurable via `WILSON_SCORE_Z_INDEX` in `.env` (default: 1.96 for 95% confidence). This balances frequency (obs/samples) with sample size, preventing locations with few checklists from ranking too high.
+- The `score` column uses Wilson score lower bound for ranking
