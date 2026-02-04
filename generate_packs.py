@@ -64,6 +64,7 @@ class PackMetadata:
     clusters: list
     size: int
     updated_at: str
+    path: str
 
 
 def get_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -381,9 +382,13 @@ def generate_pack(
         'targets': pack_targets,
     }
 
-    # Write gzipped JSON
-    output_path = output_dir / f"{pack.region}.json.gz"
-    json_string = json.dumps(pack_data, separators=(',', ':'))
+    # Write gzipped JSON to versioned subdirectory
+    version_dir = output_dir / pack_version
+    version_dir.mkdir(parents=True, exist_ok=True)
+    output_path = version_dir / f"{pack.region}.json.gz"
+    relative_path = f"{pack_version}/{pack.region}.json.gz"
+
+    json_string = json.dumps(pack_data, separators=(',', ':'), ensure_ascii=False)
     json_bytes = json_string.encode('utf-8')
 
     with gzip.open(output_path, 'wb') as f:
@@ -409,6 +414,7 @@ def generate_pack(
         clusters=clusters,
         size=file_size,
         updated_at=datetime.utcnow().isoformat() + 'Z',
+        path=relative_path,
     )
 
 
@@ -517,13 +523,16 @@ def main():
                     'clusters': m.clusters,
                     'size': m.size,
                     'updatedAt': m.updated_at,
+                    'path': m.path,
                 }
                 for m in pack_metadata_list
             ]
         }
 
         packs_index_path = output_dir / "packs.json.gz"
-        packs_index_json = json.dumps(packs_index, separators=(',', ':'))
+        packs_index_json = json.dumps(
+            packs_index, separators=(',', ':'), ensure_ascii=False
+        )
 
         with gzip.open(packs_index_path, 'wb') as f:
             f.write(packs_index_json.encode('utf-8'))
