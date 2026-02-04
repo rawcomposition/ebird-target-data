@@ -1,6 +1,6 @@
-# eBird Target Species Aggregator
+# EBD Aggregator
 
-Builds a SQLite database of bird observation statistics from eBird Basic Dataset files. It allows querying for the best hotspots to find a given species, or the most likely species at a given hotspot.
+The eBird Basic Dataset (EBD) Aggregator is a bunch of scripts to aggregate the eBird data into a SQLite database and individual region pack files. This data is used on OpenBirding.org ([see repo](https://github.com/rawcomposition/openbirding)) and the OpenBirding mobile app ([see repo](https://github.com/rawcomposition/openbirding-rn)).
 
 ## Requirements
 
