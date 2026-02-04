@@ -64,7 +64,7 @@ class PackMetadata:
     clusters: list
     size: int
     updated_at: str
-    path: str
+    url: str
 
 
 def get_distance_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -329,10 +329,13 @@ def generate_pack(
     region_names: dict[str, str],
     api_key: str,
     pack_version: str,
-    is_first_pack: bool
+    base_url: str,
+    is_first_pack: bool,
+    progress: str = ""
 ) -> Optional[PackMetadata]:
     """Generate a pack for a single region."""
-    print(f"\nGenerating pack for region: {pack.region}")
+    prefix = f"[{progress}] " if progress else ""
+    print(f"\n{prefix}Generating pack for region: {pack.region}")
     start_time = time.time()
 
     # Rate limiting (except for first pack)
@@ -376,8 +379,10 @@ def generate_pack(
     pack_targets = build_pack_targets(obs_by_location, species_by_id)
 
     # Create pack data
+    updated_at = datetime.utcnow().isoformat() + 'Z'
     pack_data = {
         'v': pack_version,
+        'updatedAt': updated_at,
         'hotspots': pack_hotspots,
         'targets': pack_targets,
     }
@@ -386,7 +391,7 @@ def generate_pack(
     version_dir = output_dir / pack_version
     version_dir.mkdir(parents=True, exist_ok=True)
     output_path = version_dir / f"{pack.region}.json.gz"
-    relative_path = f"{pack_version}/{pack.region}.json.gz"
+    pack_url = f"{base_url}{pack_version}/{pack.region}.json.gz"
 
     json_string = json.dumps(pack_data, separators=(',', ':'), ensure_ascii=False)
     json_bytes = json_string.encode('utf-8')
@@ -413,8 +418,8 @@ def generate_pack(
         hotspots=len(ebird_hotspots),
         clusters=clusters,
         size=file_size,
-        updated_at=datetime.utcnow().isoformat() + 'Z',
-        path=relative_path,
+        updated_at=updated_at,
+        url=pack_url,
     )
 
 
@@ -453,12 +458,30 @@ def main():
     else:
         pack_version = db_name
 
+    # Build base URL for pack files
+    s3_public_url = env_vars.get("S3_PUBLIC_URL", "")
+    s3_dir = env_vars.get("S3_DIR", "")
+    if s3_public_url:
+        # Ensure URL ends with /
+        if not s3_public_url.endswith("/"):
+            s3_public_url += "/"
+        # Add S3_DIR if set
+        if s3_dir:
+            base_url = f"{s3_public_url}{s3_dir}/"
+        else:
+            base_url = s3_public_url
+    else:
+        # Fallback to relative paths if no public URL configured
+        base_url = f"{s3_dir}/" if s3_dir else ""
+
     print("=" * 50)
     print("  Generate Packs")
     print("=" * 50)
     print(f"\nDatabase: {args.db_path}")
     print(f"Output directory: {output_dir}")
     print(f"Pack version: {pack_version}")
+    if s3_public_url:
+        print(f"Base URL: {base_url}")
 
     # Load packs
     packs = load_packs()
@@ -492,7 +515,8 @@ def main():
             sys.exit(1)
 
         metadata = generate_pack(
-            pack, args.db_path, output_dir, species_by_id, region_names, api_key, pack_version, True
+            pack, args.db_path, output_dir, species_by_id, region_names,
+            api_key, pack_version, base_url, True, "1/1"
         )
         if metadata:
             pack_metadata_list.append(metadata)
@@ -500,10 +524,12 @@ def main():
         # Process all packs
         print(f"\nProcessing {len(packs)} packs...")
 
+        total_packs = len(packs)
         for i, pack in enumerate(packs):
             try:
                 metadata = generate_pack(
-                    pack, args.db_path, output_dir, species_by_id, region_names, api_key, pack_version, i == 0
+                    pack, args.db_path, output_dir, species_by_id, region_names,
+                    api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}"
                 )
                 if metadata:
                     pack_metadata_list.append(metadata)
@@ -523,7 +549,7 @@ def main():
                     'clusters': m.clusters,
                     'size': m.size,
                     'updatedAt': m.updated_at,
-                    'path': m.path,
+                    'url': m.url,
                 }
                 for m in pack_metadata_list
             ]

@@ -34,6 +34,8 @@ cp .env.example .env
 | `S3_SECRET`               | For upload     | -       | S3 secret access key                               |
 | `S3_BUCKET`               | For upload     | -       | S3 bucket name                                     |
 | `S3_ENDPOINT`             | For upload     | -       | S3 endpoint URL                                    |
+| `S3_DIR`                  | No             | -       | S3 directory prefix (e.g., `v1`)                   |
+| `S3_PUBLIC_URL`           | No             | -       | Public URL for pack files (e.g., `https://cdn.example.com/`) |
 | `MEMORY_LIMIT`            | No             | 24      | DuckDB memory limit in GB                          |
 | `THREADS`                 | No             | 8       | Number of threads for DuckDB                       |
 | `WILSON_SCORE_Z_INDEX`    | No             | 1.96    | Z-index for Wilson score calculation               |
