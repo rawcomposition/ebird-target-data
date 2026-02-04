@@ -1,3 +1,4 @@
+boto3
 duckdb
 python-dateutil
 requests

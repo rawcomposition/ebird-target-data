@@ -597,7 +597,76 @@ def run_generate_packs(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
         return False
 
 
-def run_all_steps(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
+def run_upload_packs(
+    paths: dict, env_vars: dict, packs_dir: Path, pack_version: str
+) -> bool:
+    """
+    Upload packs to S3-compatible storage.
+    Returns True if successful, False otherwise.
+    """
+    print("\n" + "-" * 50)
+    print("Step: Upload Packs to S3")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    # Check for S3 credentials
+    missing = []
+    if not env_vars.get("S3_KEY_ID"):
+        missing.append("S3_KEY_ID")
+    if not env_vars.get("S3_SECRET"):
+        missing.append("S3_SECRET")
+    if not env_vars.get("S3_BUCKET"):
+        missing.append("S3_BUCKET")
+    if not env_vars.get("S3_ENDPOINT"):
+        missing.append("S3_ENDPOINT")
+
+    if missing:
+        print(f"\nError: Missing S3 credentials in .env: {', '.join(missing)}")
+        return False
+
+    # Check that packs exist
+    index_file = packs_dir / "packs.json.gz"
+    version_dir = packs_dir / pack_version
+
+    if not index_file.exists():
+        print(f"\nError: Index file not found: {index_file}")
+        print("Please run the generate packs step first.")
+        return False
+
+    if not version_dir.exists():
+        print(f"\nError: Version directory not found: {version_dir}")
+        print("Please run the generate packs step first.")
+        return False
+
+    print(f"\nPacks directory: {packs_dir}")
+    print(f"Pack version: {pack_version}")
+    print()
+    sys.stdout.flush()
+
+    upload_script = SCRIPT_DIR / "upload_packs.py"
+
+    cmd = [
+        "python3", str(upload_script),
+        str(packs_dir),
+        pack_version,
+    ]
+
+    try:
+        subprocess.run(cmd, check=True)
+        print("\nUpload complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nUpload failed: {e}")
+        return False
+
+
+def run_all_steps(
+    paths: dict,
+    env_vars: dict,
+    packs_dir: Path,
+    pack_version: str,
+    upload: bool = False
+) -> bool:
     """
     Run all pipeline steps in sequence.
     Returns True if all steps succeed, exits on failure.
@@ -626,6 +695,11 @@ def run_all_steps(paths: dict, env_vars: dict, packs_dir: Path) -> bool:
         print("\nAborting: Generate packs step failed.")
         sys.exit(1)
 
+    if upload:
+        if not run_upload_packs(paths, env_vars, packs_dir, pack_version):
+            print("\nAborting: Upload packs step failed.")
+            sys.exit(1)
+
     return True
 
 
@@ -648,17 +722,22 @@ def main():
     _, month_abbrev, year = month_options[month_idx]
     paths = get_file_paths(month_abbrev, year, datasets_dir, outputs_dir)
 
+    # Derive pack version from month/year (e.g., "dec-2025")
+    pack_version = f"{month_abbrev.lower()}-{year}"
+
     # Step 2: Choose which operation to run
     operations = [
-        "Download Species Dataset",
-        "Extract Species Archive",
-        "Filter Species Dataset",
-        "Download Sampling Dataset",
-        "Extract Sampling Archive",
-        "Filter Sampling Dataset",
-        "Build SQLite Database",
+        "Download Species",
+        "Extract Species",
+        "Filter Species",
+        "Download Sampling",
+        "Extract Sampling",
+        "Filter Sampling",
+        "Build Database",
         "Generate Packs",
-        "All (Run all steps)",
+        "Upload Packs",
+        "All (without upload)",
+        "All",
     ]
 
     print()
@@ -685,8 +764,12 @@ def main():
         success = run_build_db(paths, env_vars)
     elif op_idx == 7:
         success = run_generate_packs(paths, env_vars, packs_dir)
+    elif op_idx == 8:
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+    elif op_idx == 9:
+        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=False)
     else:
-        success = run_all_steps(paths, env_vars, packs_dir)
+        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=True)
 
     print()
     print("=" * 50)
