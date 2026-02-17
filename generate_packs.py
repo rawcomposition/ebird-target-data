@@ -270,20 +270,16 @@ def build_month_obs_map(rows: list[tuple]) -> dict:
 
 def build_pack_hotspots(
     ebird_hotspots: list[EBirdHotspot],
-    obs_by_location: dict,
     region_names: dict[str, str]
 ) -> list[dict]:
-    """Build pack hotspots array from eBird hotspots and observation data."""
+    """Build pack hotspots array from eBird hotspots."""
     pack_hotspots = []
 
     for h in ebird_hotspots:
-        location_data = obs_by_location.get(h.location_id)
-        species_count = len(location_data['species_obs']) if location_data else 0
-
         pack_hotspots.append({
             'id': h.location_id,
             'name': h.name,
-            'species': species_count,
+            'species': h.total,
             'lat': h.lat,
             'lng': h.lng,
             'country': h.country_code,
@@ -373,7 +369,7 @@ def generate_pack(
     obs_by_location = build_month_obs_map(month_obs_rows)
 
     # Build pack hotspots
-    pack_hotspots = build_pack_hotspots(ebird_hotspots, obs_by_location, region_names)
+    pack_hotspots = build_pack_hotspots(ebird_hotspots, region_names)
 
     # Build pack targets
     pack_targets = build_pack_targets(obs_by_location, species_by_id)
