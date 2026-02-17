@@ -222,10 +222,6 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
     hotspots = []
     for h in data:
         name = h.get('locName', '').strip()
-        # Filter out stakeout locations
-        if name.lower().startswith('stakeout'):
-            continue
-
         hotspots.append(EBirdHotspot(
             location_id=h['locId'],
             name=name,
