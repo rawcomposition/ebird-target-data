@@ -39,6 +39,9 @@ cp .env.example .env
 | `MEMORY_LIMIT`            | No             | 24      | DuckDB memory limit in GB                          |
 | `THREADS`                 | No             | 8       | Number of threads for DuckDB                       |
 | `WILSON_SCORE_Z_INDEX`    | No             | 1.96    | Z-index for Wilson score calculation               |
+| `SSH_USER`                | For SQLite upload | -    | SSH username for remote server                     |
+| `SSH_HOST`                | For SQLite upload | -    | SSH host/IP for remote server                      |
+| `DOCKER_VOLUME`           | For SQLite upload | -    | Docker volume name on remote server                |
 | `NTFY_NOTIFICATION_TOPIC` | No             | -       | [ntfy.sh](https://ntfy.sh) topic for notifications |
 
 ## Usage
@@ -62,9 +65,9 @@ The CLI will prompt you to:
    - **Filter Sampling** - Extract required columns and filter to hotspots
    - **Build Database** - Generate the SQLite database
    - **Generate Packs** - Generate compressed JSON packs for each region
-   - **Upload Packs** - Upload packs to S3-compatible storage
    - **All (without upload)** - Run all steps except upload
-   - **All** - Run all steps including upload
+   - **Upload Packs** - Upload packs to S3-compatible storage
+   - **Upload SQLite** - Upload the SQLite database to the remote server
 
 Each step skips automatically if its output file already exists.
 

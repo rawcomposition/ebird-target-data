@@ -659,15 +659,80 @@ def run_upload_packs(
         return False
 
 
+def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
+    """
+    Upload the SQLite database to the remote server via SSH + Docker.
+    Returns True if successful, False otherwise.
+    """
+    db_file = paths["db"]
+
+    print("\n" + "-" * 50)
+    print("Step: Upload SQLite Database")
+    print("-" * 50)
+    sys.stdout.flush()
+
+    if not db_file.exists():
+        print(f"\nError: Database file not found: {db_file}")
+        print("Please run the build database step first.")
+        return False
+
+    # Check for SSH config
+    ssh_user = env_vars.get("SSH_USER")
+    ssh_host = env_vars.get("SSH_HOST")
+    docker_volume = env_vars.get("DOCKER_VOLUME")
+
+    missing = []
+    if not ssh_user:
+        missing.append("SSH_USER")
+    if not ssh_host:
+        missing.append("SSH_HOST")
+    if not docker_volume:
+        missing.append("DOCKER_VOLUME")
+
+    if missing:
+        print(f"\nError: Missing SSH config in .env: {', '.join(missing)}")
+        return False
+
+    print(f"\nDatabase: {db_file}")
+    print(f"Remote: {ssh_user}@{ssh_host}")
+    print(f"Docker volume: {docker_volume}")
+    print()
+
+    # Warn user to stop apps using the database
+    print("WARNING: Make sure any apps using the SQLite database on the")
+    print("remote server are stopped before continuing.")
+    print()
+    response = input("Continue? [y/N] ").strip().lower()
+    if response != "y":
+        print("\nUpload cancelled.")
+        return False
+
+    print()
+    sys.stdout.flush()
+
+    cmd = (
+        f"pv {db_file} | ssh {ssh_user}@{ssh_host} "
+        f"\"docker run --rm -i -v {docker_volume}:/data alpine "
+        f"sh -c 'cat > /data/targets.db'\""
+    )
+
+    try:
+        subprocess.run(cmd, shell=True, check=True)
+        print("\nSQLite upload complete!")
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"\nSQLite upload failed: {e}")
+        return False
+
+
 def run_all_steps(
     paths: dict,
     env_vars: dict,
     packs_dir: Path,
     pack_version: str,
-    upload: bool = False
 ) -> bool:
     """
-    Run all pipeline steps in sequence.
+    Run all pipeline steps in sequence (without upload).
     Returns True if all steps succeed, exits on failure.
     """
     print("\nRunning all steps...")
@@ -693,11 +758,6 @@ def run_all_steps(
     if not run_generate_packs(paths, env_vars, packs_dir):
         print("\nAborting: Generate packs step failed.")
         sys.exit(1)
-
-    if upload:
-        if not run_upload_packs(paths, env_vars, packs_dir, pack_version):
-            print("\nAborting: Upload packs step failed.")
-            sys.exit(1)
 
     return True
 
@@ -734,9 +794,9 @@ def main():
         "Filter Sampling",
         "Build Database",
         "Generate Packs",
-        "Upload Packs",
         "All (without upload)",
-        "All",
+        "Upload Packs",
+        "Upload SQLite",
     ]
 
     print()
@@ -764,11 +824,11 @@ def main():
     elif op_idx == 7:
         success = run_generate_packs(paths, env_vars, packs_dir)
     elif op_idx == 8:
-        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+        success = run_all_steps(paths, env_vars, packs_dir, pack_version)
     elif op_idx == 9:
-        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=False)
-    else:
-        success = run_all_steps(paths, env_vars, packs_dir, pack_version, upload=True)
+        success = run_upload_packs(paths, env_vars, packs_dir, pack_version)
+    elif op_idx == 10:
+        success = run_upload_sqlite(paths, env_vars)
 
     print()
     print("=" * 50)
