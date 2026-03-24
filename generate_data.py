@@ -161,7 +161,8 @@ def build_database(
     wilson_z: float = 1.96,
 ) -> None:
     """
-    Build the month_obs database from eBird species and sampling files.
+    Build hotspot and region observation tables from eBird species and
+    sampling files.
     """
     start_time = time.time()
 
@@ -200,7 +201,7 @@ def build_database(
     if threads:
         print(f"Threads: {threads}")
 
-    total_steps = 8
+    total_steps = 10
     step_num = 0
     initialize_page_size = not output_db.exists() or output_db.stat().st_size == 0
 
@@ -216,8 +217,8 @@ def build_database(
     sqlite_con.close()
     print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
 
-    # Create the final month_obs table up front so DuckDB can insert rows in
-    # primary-key order directly into the compact WITHOUT ROWID layout.
+    # Create the final tables up front so DuckDB can insert rows in primary-key
+    # order directly into the compact WITHOUT ROWID layout.
     sqlite_con = open_sqlite_build_connection(output_db)
     sqlite_con.execute("DROP TABLE IF EXISTS month_obs")
     sqlite_con.execute("""
@@ -231,16 +232,71 @@ def build_database(
             PRIMARY KEY (location_id, month, species_id)
         ) WITHOUT ROWID
     """)
+    sqlite_con.execute("DROP TABLE IF EXISTS region_month_obs")
+    sqlite_con.execute("""
+        CREATE TABLE region_month_obs (
+            region_id INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            species_id INTEGER NOT NULL,
+            obs INTEGER NOT NULL,
+            samples INTEGER NOT NULL,
+            PRIMARY KEY (region_id, month, species_id)
+        ) WITHOUT ROWID
+    """)
+    sqlite_con.execute("DROP TABLE IF EXISTS regions")
+    sqlite_con.execute("""
+        CREATE TABLE regions (
+            id INTEGER PRIMARY KEY,
+            code TEXT NOT NULL
+        )
+    """)
     sqlite_con.commit()
     sqlite_con.close()
 
     # Attach SQLite database for output
     con.execute(f"ATTACH '{output_db}' AS sqlite_db (TYPE SQLITE)")
 
-    # Step 2: Calculate samples per (location, month) and (location, year) from sampling file
+    # Step 2: Calculate location metadata and checklist counts from sampling file.
     step_num += 1
-    print(f"\nStep {step_num}/{total_steps}: Calculating samples per location...")
+    print(f"\nStep {step_num}/{total_steps}: Calculating location samples...")
     step_start = time.time()
+    con.execute(f"""
+        CREATE TEMP TABLE location_dim AS
+        SELECT
+            "LOCALITY ID" AS location_id,
+            MAX("LOCALITY") AS name,
+            MAX("LOCALITY TYPE") AS locality_type,
+            MAX("COUNTRY CODE") AS country_code,
+            CASE
+                WHEN MAX("STATE CODE") IS NOT NULL
+                     AND MAX("STATE CODE") != ''
+                     AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
+                THEN MAX("STATE CODE")
+                ELSE NULL
+            END AS subnational1_code,
+            NULLIF(MAX("COUNTY CODE"), '') AS subnational2_code,
+            COALESCE(
+                NULLIF(MAX("COUNTY CODE"), ''),
+                CASE
+                    WHEN MAX("STATE CODE") IS NOT NULL
+                         AND MAX("STATE CODE") != ''
+                         AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
+                    THEN MAX("STATE CODE")
+                    ELSE NULL
+                END,
+                MAX("COUNTRY CODE")
+            ) AS region_code,
+            MAX("LATITUDE") AS lat,
+            MAX("LONGITUDE") AS lng
+        FROM read_csv(
+            '{sampling_file}',
+            delim='\t',
+            header=true,
+            quote='',
+            ignore_errors=true
+        )
+        GROUP BY location_id
+    """)
     con.execute(f"""
         CREATE TEMP TABLE samples_agg AS
         SELECT
@@ -256,18 +312,38 @@ def build_database(
         )
         GROUP BY location_id, month
     """)
-    # Also create yearly samples aggregation
+    con.execute("""
+        CREATE TEMP TABLE hotspot_samples_agg AS
+        SELECT
+            s.location_id,
+            s.month,
+            s.samples
+        FROM samples_agg s
+        JOIN location_dim ld ON ld.location_id = s.location_id
+        WHERE ld.locality_type = 'H'
+    """)
     con.execute("""
         CREATE TEMP TABLE year_samples_agg AS
         SELECT
             location_id,
             SUM(samples) AS samples
-        FROM samples_agg
+        FROM hotspot_samples_agg
         GROUP BY location_id
+    """)
+    con.execute("""
+        CREATE TEMP TABLE region_samples_agg AS
+        SELECT
+            ld.region_code,
+            s.month,
+            SUM(s.samples) AS samples
+        FROM samples_agg s
+        JOIN location_dim ld ON ld.location_id = s.location_id
+        WHERE ld.region_code IS NOT NULL
+        GROUP BY ld.region_code, s.month
     """)
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 3: Calculate observations and join with samples
+    # Step 3: Calculate observations and join with per-location samples.
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Calculating observations...")
     step_start = time.time()
@@ -299,8 +375,38 @@ def build_database(
             ON o.location_id = s.location_id
             AND o.month = s.month
     """)
-    month_obs_count = con.execute("SELECT COUNT(*) FROM observations_agg").fetchone()[0]
-    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM observations_agg").fetchone()[0]
+    con.execute("""
+        CREATE TEMP TABLE hotspot_observations_agg AS
+        SELECT
+            o.location_id,
+            o.month,
+            o.species_id,
+            o.obs,
+            o.samples
+        FROM observations_agg o
+        JOIN location_dim ld ON ld.location_id = o.location_id
+        WHERE ld.locality_type = 'H'
+    """)
+    con.execute("""
+        CREATE TEMP TABLE region_observations_agg AS
+        SELECT
+            ld.region_code,
+            o.month,
+            o.species_id,
+            SUM(o.obs) AS obs
+        FROM observations_agg o
+        JOIN location_dim ld ON ld.location_id = o.location_id
+        WHERE ld.region_code IS NOT NULL
+        GROUP BY ld.region_code, o.month, o.species_id
+    """)
+    region_month_obs_count = con.execute(
+        "SELECT COUNT(*) FROM region_observations_agg"
+    ).fetchone()[0]
+    region_count = con.execute(
+        "SELECT COUNT(DISTINCT region_code) FROM region_samples_agg"
+    ).fetchone()[0]
+    month_obs_count = con.execute("SELECT COUNT(*) FROM hotspot_observations_agg").fetchone()[0]
+    loc_count = con.execute("SELECT COUNT(DISTINCT location_id) FROM hotspot_observations_agg").fetchone()[0]
     species_count = con.execute("SELECT COUNT(DISTINCT species_id) FROM observations_agg").fetchone()[0]
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
@@ -320,13 +426,14 @@ def build_database(
             -- Wilson score lower bound (z={wilson_z})
             (o.obs + {z_sq_half} - {wilson_z} * sqrt(o.obs * (o.samples - o.obs) / o.samples + {z_sq_quarter}))
                 / (o.samples + {z_sq}) AS score
-        FROM observations_agg o
+        FROM hotspot_observations_agg o
         ORDER BY o.location_id, o.month, o.species_id
     """)
     print(f"  Inserted {month_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
     # Step 5: Create and populate year_obs table
-    # Aggregate from observations_agg (not month_obs) to avoid losing data filtered at month level
+    # Aggregate from hotspot_observations_agg (not month_obs) to avoid losing
+    # data filtered at month level.
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating year_obs table...")
     step_start = time.time()
@@ -357,7 +464,7 @@ def build_database(
                 o.location_id,
                 o.species_id,
                 SUM(o.obs) AS obs
-            FROM observations_agg o
+            FROM hotspot_observations_agg o
             GROUP BY o.location_id, o.species_id
         ) agg
         JOIN year_samples_agg ys ON agg.location_id = ys.location_id
@@ -366,7 +473,46 @@ def build_database(
     year_obs_count = con.execute("SELECT COUNT(*) FROM sqlite_db.year_obs").fetchone()[0]
     print(f"  Created {year_obs_count:,} rows ({format_duration(time.time() - step_start)})")
 
-    # Step 6: Extract hotspots from sampling data
+    # Step 6: Create region tables for all complete checklists, including
+    # personal locations.
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Creating region_month_obs table...")
+    step_start = time.time()
+
+    con.execute("""
+        INSERT INTO sqlite_db.regions (id, code)
+        SELECT
+            ROW_NUMBER() OVER (ORDER BY region_code) AS id,
+            region_code AS code
+        FROM (
+            SELECT DISTINCT region_code
+            FROM region_samples_agg
+        )
+        ORDER BY region_code
+    """)
+
+    con.execute("""
+        INSERT INTO sqlite_db.region_month_obs (region_id, month, species_id, obs, samples)
+        SELECT
+            r.id AS region_id,
+            ro.month,
+            ro.species_id,
+            ro.obs,
+            rs.samples
+        FROM region_observations_agg ro
+        JOIN region_samples_agg rs
+            ON rs.region_code = ro.region_code
+            AND rs.month = ro.month
+        JOIN sqlite_db.regions r ON r.code = ro.region_code
+        ORDER BY r.id, ro.month, ro.species_id
+    """)
+
+    print(
+        f"  Created {region_month_obs_count:,} rows across "
+        f"{region_count:,} leaf regions ({format_duration(time.time() - step_start)})"
+    )
+
+    # Step 7: Extract hotspots from sampling data
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Extracting hotspots from sampling data...")
     step_start = time.time()
@@ -385,45 +531,20 @@ def build_database(
         )
     """)
 
-    # Extract unique locations from sampling data
-    # Filter out invalid subnational1 codes (e.g., "CO-" without state)
-    # Set region_code to most specific available: subnational2 > subnational1 > country
-    con.execute(f"""
+    # Extract unique hotspot locations from location metadata.
+    con.execute("""
         INSERT INTO sqlite_db.hotspots (id, name, country_code, subnational1_code, subnational2_code, region_code, lat, lng)
         SELECT
-            "LOCALITY ID" AS id,
-            MAX("LOCALITY") AS name,
-            MAX("COUNTRY CODE") AS country_code,
-            CASE
-                WHEN MAX("STATE CODE") IS NOT NULL
-                     AND MAX("STATE CODE") != ''
-                     AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
-                THEN MAX("STATE CODE")
-                ELSE NULL
-            END AS subnational1_code,
-            NULLIF(MAX("COUNTY CODE"), '') AS subnational2_code,
-            -- region_code: most specific available
-            COALESCE(
-                NULLIF(MAX("COUNTY CODE"), ''),
-                CASE
-                    WHEN MAX("STATE CODE") IS NOT NULL
-                         AND MAX("STATE CODE") != ''
-                         AND LENGTH(MAX("STATE CODE")) > LENGTH(SPLIT_PART(MAX("STATE CODE"), '-', 1)) + 1
-                    THEN MAX("STATE CODE")
-                    ELSE NULL
-                END,
-                MAX("COUNTRY CODE")
-            ) AS region_code,
-            MAX("LATITUDE") AS lat,
-            MAX("LONGITUDE") AS lng
-        FROM read_csv(
-            '{sampling_file}',
-            delim='\t',
-            header=true,
-            quote='',
-            ignore_errors=true
-        )
-        GROUP BY "LOCALITY ID"
+            location_id AS id,
+            name,
+            country_code,
+            subnational1_code,
+            subnational2_code,
+            region_code,
+            lat,
+            lng
+        FROM location_dim
+        WHERE locality_type = 'H'
     """)
 
     hotspot_count = con.execute("SELECT COUNT(*) FROM sqlite_db.hotspots").fetchone()[0]
@@ -431,7 +552,7 @@ def build_database(
 
     con.close()
 
-    # Step 7: Create indexes using sqlite3
+    # Step 8: Create indexes using sqlite3
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Creating indexes...")
     step_start = time.time()
@@ -439,6 +560,8 @@ def build_database(
         # Species-based queries (sorted by score)
         "CREATE INDEX IF NOT EXISTS idx_mo_species_score ON month_obs(species_id, score DESC)",
         "CREATE INDEX IF NOT EXISTS idx_yo_species_score ON year_obs(species_id, score DESC)",
+        # Region lookups
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_regions_code ON regions(code)",
         # Hotspot indexes
         "CREATE INDEX IF NOT EXISTS idx_hotspots_country ON hotspots(country_code)",
         "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
@@ -455,7 +578,30 @@ def build_database(
 
     print(f"  Done ({format_duration(time.time() - step_start)})")
 
-    # Step 8: Create metadata table
+    # Step 9: Build FTS5 index for species search
+    step_num += 1
+    print(f"\nStep {step_num}/{total_steps}: Building species FTS index...")
+    step_start = time.time()
+    sqlite_con = open_sqlite_build_connection(output_db)
+    sqlite_con.execute("DROP TABLE IF EXISTS species_fts")
+    sqlite_con.execute("""
+        CREATE VIRTUAL TABLE species_fts USING fts5(
+            name,
+            sci_name,
+            search_codes,
+            content='species',
+            content_rowid='id',
+            tokenize='unicode61 remove_diacritics 2',
+            prefix='2 3 4'
+        )
+    """)
+    sqlite_con.execute("INSERT INTO species_fts(species_fts) VALUES('rebuild')")
+    sqlite_con.execute("INSERT INTO species_fts(species_fts) VALUES('optimize')")
+    sqlite_con.commit()
+    sqlite_con.close()
+    print(f"  Done ({format_duration(time.time() - step_start)})")
+
+    # Step 10: Create metadata table
     step_num += 1
     print(f"\nStep {step_num}/{total_steps}: Writing metadata...")
     step_start = time.time()
@@ -489,6 +635,8 @@ def build_database(
     print("Summary:")
     print(f"  Total month_obs rows: {month_obs_count:,}")
     print(f"  Total year_obs rows: {year_obs_count:,}")
+    print(f"  Total region_month_obs rows: {region_month_obs_count:,}")
+    print(f"  Total leaf regions: {region_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")
     print(f"  Hotspots: {hotspot_count:,}")

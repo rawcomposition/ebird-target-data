@@ -5,6 +5,9 @@ Extract only the columns needed for generate_data.py from a gzipped eBird file.
 This reduces the file size significantly by keeping only essential columns,
 making subsequent processing faster and requiring less disk space.
 
+Keeps all complete checklists so hotspot and region aggregates can both be
+built from the same extracted file.
+
 Usage:
     python extract_columns.py <input.txt.gz> <output.tsv>
 
@@ -76,7 +79,6 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
         category_idx = header_cols.index("CATEGORY")
-        locality_type_idx = header_cols.index("LOCALITY TYPE")
 
         # Write header
         outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
@@ -85,9 +87,8 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
         for line_bytes in proc.stdout:
             cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Filter: complete checklists, hotspots only, species/issf only
+            # Filter: complete checklists, species/issf only
             if (cols[all_species_idx] != "1" or
-                cols[locality_type_idx] != "H" or
                 cols[category_idx] not in VALID_CATEGORIES):
                 rows_skipped += 1
                 continue
@@ -116,7 +117,7 @@ def extract_columns(input_file: Path, output_file: Path) -> None:
     print("=" * 50)
     print(f"Total rows read: {total_rows:,}")
     print(f"Rows written: {rows_processed:,}")
-    print(f"Rows skipped (incomplete checklists): {rows_skipped:,}")
+    print(f"Rows skipped (incomplete/non-species): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
     print(f"\nOutput written to: {output_file}")

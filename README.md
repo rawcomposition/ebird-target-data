@@ -60,10 +60,10 @@ The CLI will prompt you to:
 2. Choose which step to run:
    - **Download Species** - Download the eBird Basic Dataset
    - **Extract Species** - Extract the gzipped species data from the tar
-   - **Filter Species** - Extract required columns and filter to hotspots
+   - **Filter Species** - Extract required columns from complete checklists
    - **Download Sampling** - Download the eBird Sampling Dataset
    - **Extract Sampling** - Extract the gzipped sampling data from the tar
-   - **Filter Sampling** - Extract required columns and filter to hotspots
+   - **Filter Sampling** - Extract required columns from complete checklists
    - **Build Database** - Generate the SQLite database
    - **Generate Packs** - Generate compressed JSON packs for each region
    - **All (without upload)** - Run all steps except upload
@@ -110,6 +110,11 @@ CREATE TABLE hotspots (
     lng REAL
 );
 
+CREATE TABLE regions (
+    id INTEGER PRIMARY KEY,
+    code TEXT NOT NULL
+);
+
 CREATE TABLE month_obs (
     location_id TEXT NOT NULL,
     month INTEGER NOT NULL,
@@ -126,12 +131,21 @@ CREATE TABLE year_obs (
     samples INTEGER NOT NULL,
     score REAL NOT NULL
 );
+
+CREATE TABLE region_month_obs (
+    region_id INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    species_id INTEGER NOT NULL,
+    obs INTEGER NOT NULL,
+    samples INTEGER NOT NULL
+);
 ```
 
 ## Notes
 
-- Only includes hotspot locations (`LOCALITY TYPE = H`)
 - Only includes complete checklists (`ALL SPECIES REPORTED = 1`)
+- `month_obs` and `year_obs` only include hotspot locations (`LOCALITY TYPE = H`)
+- `region_month_obs` includes complete checklists from hotspots and personal locations
 - Group checklists are deduplicated
 - Only species-level taxa are included (`CATEGORY` = 'species' or 'issf')
 - The `score` column uses Wilson score lower bound for ranking

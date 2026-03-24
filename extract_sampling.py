@@ -2,7 +2,8 @@
 """
 Extract only the columns needed for sample counting from a gzipped eBird sampling file.
 
-Filters to complete checklists at hotspots only.
+Keeps all complete checklists so hotspot and region aggregates can both be
+built from the same extracted file.
 
 Usage:
     python extract_sampling.py <input.txt.gz> <output.tsv>
@@ -19,10 +20,11 @@ from pathlib import Path
 
 from utils import format_duration, format_size
 
-# Columns needed for sample calculation and hotspot extraction
+# Columns needed for sample calculation, region aggregation, and hotspot extraction
 REQUIRED_COLUMNS = [
     "LOCALITY ID",
     "LOCALITY",
+    "LOCALITY TYPE",
     "OBSERVATION DATE",
     "SAMPLING EVENT IDENTIFIER",
     "GROUP IDENTIFIER",
@@ -76,7 +78,6 @@ def extract_sampling(input_file: Path, output_file: Path) -> None:
 
         # Find indices for filter columns
         all_species_idx = header_cols.index("ALL SPECIES REPORTED")
-        locality_type_idx = header_cols.index("LOCALITY TYPE")
 
         # Write header
         outfile.write("\t".join(REQUIRED_COLUMNS) + "\n")
@@ -85,8 +86,8 @@ def extract_sampling(input_file: Path, output_file: Path) -> None:
         for line_bytes in proc.stdout:
             cols = line_bytes.decode("utf-8", errors="replace").rstrip("\n").split("\t")
 
-            # Filter: complete checklists at hotspots only
-            if cols[all_species_idx] != "1" or cols[locality_type_idx] != "H":
+            # Filter: complete checklists only
+            if cols[all_species_idx] != "1":
                 rows_skipped += 1
                 continue
 
@@ -114,7 +115,7 @@ def extract_sampling(input_file: Path, output_file: Path) -> None:
     print("=" * 50)
     print(f"Total rows read: {total_rows:,}")
     print(f"Rows written: {rows_processed:,}")
-    print(f"Rows skipped (incomplete/non-hotspot): {rows_skipped:,}")
+    print(f"Rows skipped (incomplete): {rows_skipped:,}")
     print(f"Output size: {format_size(output_size)}")
     print(f"Total time: {format_duration(elapsed)}")
     print(f"\nOutput written to: {output_file}")
