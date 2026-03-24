@@ -136,7 +136,12 @@ CREATE TABLE region_month_obs (
     region_id INTEGER NOT NULL,
     month INTEGER NOT NULL,
     species_id INTEGER NOT NULL,
-    obs INTEGER NOT NULL,
+    obs INTEGER NOT NULL
+);
+
+CREATE TABLE region_month_samples (
+    region_id INTEGER NOT NULL,
+    month INTEGER NOT NULL,
     samples INTEGER NOT NULL
 );
 ```

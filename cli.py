@@ -668,7 +668,8 @@ def run_upload_packs(
 
 def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     """
-    Upload the SQLite database to the remote server via SSH + Docker.
+    Upload the SQLite database to the remote server via SSH + Docker,
+    then trigger a zero-downtime swap via the admin API.
     Returns True if successful, False otherwise.
     """
     db_file = paths["db"]
@@ -687,6 +688,8 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     ssh_user = env_vars.get("SSH_USER")
     ssh_host = env_vars.get("SSH_HOST")
     docker_volume = env_vars.get("DOCKER_VOLUME")
+    db_swap_endpoint = env_vars.get("DB_SWAP_ENDPOINT")
+    api_token = env_vars.get("DB_SWAP_ENDPOINT_TOKEN")
 
     missing = []
     if not ssh_user:
@@ -695,9 +698,13 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
         missing.append("SSH_HOST")
     if not docker_volume:
         missing.append("DOCKER_VOLUME")
+    if not db_swap_endpoint:
+        missing.append("DB_SWAP_ENDPOINT")
+    if not api_token:
+        missing.append("DB_SWAP_ENDPOINT_TOKEN")
 
     if missing:
-        print(f"\nError: Missing SSH config in .env: {', '.join(missing)}")
+        print(f"\nError: Missing config in .env: {', '.join(missing)}")
         return False
 
     print(f"\nDatabase: {db_file}")
@@ -705,30 +712,66 @@ def run_upload_sqlite(paths: dict, env_vars: dict) -> bool:
     print(f"Docker volume: {docker_volume}")
     print()
 
-    # Warn user to stop apps using the database
-    print("WARNING: Make sure any apps using the SQLite database on the")
-    print("remote server are stopped before continuing.")
-    print()
-    response = input("Continue? [y/N] ").strip().lower()
+    response = input("Continue with upload and swap? [y/N] ").strip().lower()
     if response != "y":
         print("\nUpload cancelled.")
         return False
 
-    print()
+    # Upload to targets.db.new (does not affect the running app)
+    print("\nUploading to targets.db.new...")
     sys.stdout.flush()
 
     cmd = (
         f"pv \"{db_file}\" | ssh {ssh_user}@{ssh_host} "
         f"\"docker run --rm -i -v {docker_volume}:/data alpine "
-        f"sh -c 'cat > /data/targets.db'\""
+        f"sh -c 'cat > /data/targets.db.new'\""
     )
 
     try:
         subprocess.run(cmd, shell=True, check=True)
-        print("\nSQLite upload complete!")
-        return True
+        print("\nUpload complete!")
     except subprocess.CalledProcessError as e:
         print(f"\nSQLite upload failed: {e}")
+        return False
+
+    # Trigger zero-downtime swap via admin API
+    print("\nSwapping targets database...")
+    sys.stdout.flush()
+
+    swap_url = db_swap_endpoint
+    try:
+        resp = requests.post(
+            swap_url,
+            headers={"Authorization": f"Bearer {api_token}"},
+            timeout=120,
+        )
+        try:
+            result = resp.json()
+        except ValueError:
+            body = resp.text.strip()
+            if len(body) > 500:
+                body = body[:500] + "..."
+            print(
+                f"\nSwap failed ({resp.status_code}): "
+                "admin API returned a non-JSON response. "
+                "The uploaded database is still staged as /data/targets.db.new."
+            )
+            if body:
+                print(body)
+            return False
+        if resp.status_code == 200 and result.get("ok"):
+            print(f"Database swapped successfully! Version: {result.get('version')}")
+            return True
+        else:
+            print(
+                f"\nSwap failed ({resp.status_code}): "
+                f"{result.get('error', resp.text)} "
+                "(uploaded database remains staged as /data/targets.db.new)"
+            )
+            return False
+    except requests.RequestException as e:
+        print(f"\nSwap request failed: {e}")
+        print("The uploaded database remains staged as /data/targets.db.new.")
         return False
 
 

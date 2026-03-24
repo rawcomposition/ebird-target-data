@@ -239,8 +239,16 @@ def build_database(
             month INTEGER NOT NULL,
             species_id INTEGER NOT NULL,
             obs INTEGER NOT NULL,
-            samples INTEGER NOT NULL,
             PRIMARY KEY (region_id, month, species_id)
+        ) WITHOUT ROWID
+    """)
+    sqlite_con.execute("DROP TABLE IF EXISTS region_month_samples")
+    sqlite_con.execute("""
+        CREATE TABLE region_month_samples (
+            region_id INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            samples INTEGER NOT NULL,
+            PRIMARY KEY (region_id, month)
         ) WITHOUT ROWID
     """)
     sqlite_con.execute("DROP TABLE IF EXISTS regions")
@@ -402,6 +410,9 @@ def build_database(
     region_month_obs_count = con.execute(
         "SELECT COUNT(*) FROM region_observations_agg"
     ).fetchone()[0]
+    region_month_samples_count = con.execute(
+        "SELECT COUNT(*) FROM region_samples_agg"
+    ).fetchone()[0]
     region_count = con.execute(
         "SELECT COUNT(DISTINCT region_code) FROM region_samples_agg"
     ).fetchone()[0]
@@ -476,7 +487,7 @@ def build_database(
     # Step 6: Create region tables for all complete checklists, including
     # personal locations.
     step_num += 1
-    print(f"\nStep {step_num}/{total_steps}: Creating region_month_obs table...")
+    print(f"\nStep {step_num}/{total_steps}: Creating region tables...")
     step_start = time.time()
 
     con.execute("""
@@ -492,23 +503,31 @@ def build_database(
     """)
 
     con.execute("""
-        INSERT INTO sqlite_db.region_month_obs (region_id, month, species_id, obs, samples)
+        INSERT INTO sqlite_db.region_month_samples (region_id, month, samples)
+        SELECT
+            r.id AS region_id,
+            rs.month,
+            rs.samples
+        FROM region_samples_agg rs
+        JOIN sqlite_db.regions r ON r.code = rs.region_code
+        ORDER BY r.id, rs.month
+    """)
+
+    con.execute("""
+        INSERT INTO sqlite_db.region_month_obs (region_id, month, species_id, obs)
         SELECT
             r.id AS region_id,
             ro.month,
             ro.species_id,
-            ro.obs,
-            rs.samples
+            ro.obs
         FROM region_observations_agg ro
-        JOIN region_samples_agg rs
-            ON rs.region_code = ro.region_code
-            AND rs.month = ro.month
         JOIN sqlite_db.regions r ON r.code = ro.region_code
         ORDER BY r.id, ro.month, ro.species_id
     """)
 
     print(
-        f"  Created {region_month_obs_count:,} rows across "
+        f"  Created {region_month_obs_count:,} obs rows and "
+        f"{region_month_samples_count:,} sample rows across "
         f"{region_count:,} leaf regions ({format_duration(time.time() - step_start)})"
     )
 
@@ -636,6 +655,7 @@ def build_database(
     print(f"  Total month_obs rows: {month_obs_count:,}")
     print(f"  Total year_obs rows: {year_obs_count:,}")
     print(f"  Total region_month_obs rows: {region_month_obs_count:,}")
+    print(f"  Total region_month_samples rows: {region_month_samples_count:,}")
     print(f"  Total leaf regions: {region_count:,}")
     print(f"  Total locations: {loc_count:,}")
     print(f"  Unique species: {species_count:,}")
