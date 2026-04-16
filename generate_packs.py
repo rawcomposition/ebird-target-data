@@ -338,12 +338,8 @@ def generate_pack(
         time.sleep(EBIRD_API_DELAY)
 
     # Fetch hotspots from eBird API
-    try:
-        ebird_hotspots = fetch_hotspots_for_region(pack.region, api_key)
-        print(f"  Fetched {len(ebird_hotspots)} hotspots from eBird")
-    except Exception as e:
-        print(f"  Error fetching hotspots from eBird: {e}")
-        return None
+    ebird_hotspots = fetch_hotspots_for_region(pack.region, api_key)
+    print(f"  Fetched {len(ebird_hotspots)} hotspots from eBird")
 
     if not ebird_hotspots:
         print("  Skipping - no hotspots")
@@ -530,7 +526,8 @@ def main():
                 if metadata:
                     pack_metadata_list.append(metadata)
             except Exception as e:
-                print(f"Error processing pack {pack.region}: {e}")
+                print(f"\nError processing pack {pack.region}: {e}")
+                sys.exit(1)
 
     # Generate packs.json.gz index file
     if pack_metadata_list:
