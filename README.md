@@ -30,10 +30,10 @@ cp .env.example .env
 | ------------------------- | -------------- | ------- | -------------------------------------------------- |
 | `OUTPUT_PATH`             | No             | -       | Base path for datasets and output directories      |
 | `EBIRD_API_KEY`           | For packs      | -       | eBird API key (required for Generate Packs)        |
-| `S3_KEY_ID`               | For packupload | -       | S3 access key ID                                   |
-| `S3_SECRET`               | For upload     | -       | S3 secret access key                               |
-| `S3_BUCKET`               | For upload     | -       | S3 bucket name                                     |
-| `S3_ENDPOINT`             | For upload     | -       | S3 endpoint URL                                    |
+| `S3_KEY_ID`               | For packs upload | -       | S3 access key ID                                   |
+| `S3_SECRET`               | For packs upload | -       | S3 secret access key                               |
+| `S3_BUCKET`               | For packs upload | -       | S3 bucket name                                     |
+| `S3_ENDPOINT`             | For packs upload | -       | S3 endpoint URL                                    |
 | `S3_DIR`                  | No             | -       | S3 directory prefix (e.g., `v1`)                   |
 | `S3_PUBLIC_URL`           | No             | -       | Public URL for pack files (e.g., `https://cdn.example.com/`) |
 | `MEMORY_LIMIT`            | No             | 24      | DuckDB memory limit in GB                          |
