@@ -22,6 +22,7 @@ from typing import Optional
 import requests
 
 from utils import format_duration, format_size, load_env_file
+from hotspot_sync import create_hotspot_sync
 
 # Get script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -53,6 +54,8 @@ class EBirdHotspot:
     country_code: str
     subnational1_code: str
     subnational2_code: str
+    latest_obs: Optional[str] = None
+    num_checklists: Optional[int] = None
 
 
 @dataclass
@@ -235,6 +238,8 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
             country_code=h.get('countryCode', ''),
             subnational1_code=h.get('subnational1Code', ''),
             subnational2_code=h.get('subnational2Code', ''),
+            latest_obs=h.get('latestObsDt'),
+            num_checklists=h.get('numChecklistsAllTime'),
         ))
 
     return hotspots
@@ -437,7 +442,8 @@ def generate_pack(
     pack_version: str,
     base_url: str,
     is_first_pack: bool,
-    progress: str = ""
+    progress: str = "",
+    hotspot_sync=None
 ) -> Optional[PackMetadata]:
     """Generate a pack for a single region."""
     prefix = f"[{progress}] " if progress else ""
@@ -455,6 +461,14 @@ def generate_pack(
     if not ebird_hotspots:
         print("  Skipping - no hotspots")
         return None
+
+    if hotspot_sync:
+        try:
+            synced, deleted = hotspot_sync.sync_region(pack.region, ebird_hotspots)
+            deleted_note = f", {deleted} soft-deleted" if deleted else ""
+            print(f"  Synced {synced} hotspots to database{deleted_note}")
+        except Exception as e:
+            print(f"  Warning: hotspot sync failed for {pack.region}: {e}")
 
     # Query month_obs from a read-only connection.
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -623,6 +637,14 @@ def main():
         print(f"Warning: Could not fetch region names: {e}")
         region_names = {}
 
+    hotspot_sync = None
+    try:
+        hotspot_sync = create_hotspot_sync(env_vars)
+    except Exception as e:
+        print(f"Warning: hotspot sync disabled: {e}")
+    if hotspot_sync:
+        print("Hotspot sync enabled (DATABASE_URL configured)")
+
     start_time = time.time()
     pack_metadata_list = []
 
@@ -642,13 +664,19 @@ def main():
         try:
             metadata = generate_pack(
                 pack, args.db_path, output_dir, species_by_id, region_names,
-                api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}"
+                api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}",
+                hotspot_sync
             )
             if metadata:
                 pack_metadata_list.append(metadata)
         except Exception as e:
             print(f"\nError processing pack {pack.region}: {e}")
+            if hotspot_sync:
+                hotspot_sync.close()
             sys.exit(1)
+
+    if hotspot_sync:
+        hotspot_sync.close()
 
     # Generate packs.json.gz index file
     if pack_metadata_list:

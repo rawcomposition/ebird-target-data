@@ -1,5 +1,6 @@
 boto3
 duckdb
+psycopg[binary]
 numpy
 python-dateutil
 requests
