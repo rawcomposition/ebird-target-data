@@ -15,12 +15,11 @@ from datetime import datetime, timezone
 UPSERT_SQL = """
     INSERT INTO hotspots (
         id, name, country_code, subnational1, subnational2, lat, lng,
-        latest_obs_at, num_species, num_checklists, last_synced_at
+        num_species, num_checklists, last_synced_at
     )
     VALUES (
         %(id)s, %(name)s, %(country_code)s, %(subnational1)s, %(subnational2)s,
-        %(lat)s, %(lng)s, %(latest_obs_at)s, %(num_species)s, %(num_checklists)s,
-        %(last_synced_at)s
+        %(lat)s, %(lng)s, %(num_species)s, %(num_checklists)s, %(last_synced_at)s
     )
     ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
@@ -29,12 +28,21 @@ UPSERT_SQL = """
         subnational2 = EXCLUDED.subnational2,
         lat = EXCLUDED.lat,
         lng = EXCLUDED.lng,
-        latest_obs_at = EXCLUDED.latest_obs_at,
         num_species = EXCLUDED.num_species,
         num_checklists = EXCLUDED.num_checklists,
         last_synced_at = EXCLUDED.last_synced_at,
         deleted_at = NULL,
-        updated_at = now()
+        updated_at = CASE
+            WHEN (hotspots.name, hotspots.country_code, hotspots.subnational1,
+                  hotspots.subnational2, hotspots.lat, hotspots.lng,
+                  hotspots.num_species, hotspots.num_checklists, hotspots.deleted_at)
+                 IS DISTINCT FROM
+                 (EXCLUDED.name, EXCLUDED.country_code, EXCLUDED.subnational1,
+                  EXCLUDED.subnational2, EXCLUDED.lat, EXCLUDED.lng,
+                  EXCLUDED.num_species, EXCLUDED.num_checklists, NULL)
+            THEN now()
+            ELSE hotspots.updated_at
+        END
 """
 
 SOFT_DELETE_SQL = """
@@ -62,7 +70,6 @@ class HotspotSync:
                 "subnational2": h.subnational2_code or None,
                 "lat": h.lat,
                 "lng": h.lng,
-                "latest_obs_at": h.latest_obs or None,
                 "num_species": h.total,
                 "num_checklists": h.num_checklists,
                 "last_synced_at": self.run_start,

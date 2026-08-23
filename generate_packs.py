@@ -54,7 +54,6 @@ class EBirdHotspot:
     country_code: str
     subnational1_code: str
     subnational2_code: str
-    latest_obs: Optional[str] = None
     num_checklists: Optional[int] = None
 
 
@@ -238,7 +237,6 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
             country_code=h.get('countryCode', ''),
             subnational1_code=h.get('subnational1Code', ''),
             subnational2_code=h.get('subnational2Code', ''),
-            latest_obs=h.get('latestObsDt'),
             num_checklists=h.get('numChecklistsAllTime'),
         ))
 
