@@ -165,6 +165,7 @@ CREATE TABLE metadata (
     version TEXT NOT NULL,
     version_year TEXT NOT NULL,
     version_month TEXT NOT NULL,
+    taxonomy_version TEXT NOT NULL,        -- eBird taxonomy authority version (e.g. 2025.0)
     generated_at TEXT NOT NULL
 );
 
@@ -267,6 +268,7 @@ the same ≥25-checklist floor.
 ```sql
 CREATE TABLE metadata (
     version TEXT, version_year TEXT, version_month TEXT,
+    taxonomy_version TEXT,                     -- copied from the targets db
     generated_at TEXT, buckets TEXT,           -- JSON array of frequency thresholds
     min_score REAL, min_checklists INTEGER
 );

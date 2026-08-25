@@ -205,6 +205,7 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
         """
         CREATE TABLE metadata (
           version TEXT, version_year TEXT, version_month TEXT,
+          taxonomy_version TEXT,
           generated_at TEXT, buckets TEXT,
           min_score REAL, min_checklists INTEGER
         );
@@ -283,14 +284,15 @@ def build_tables(src: Path, out: Path, zone_resolutions: list[int]):
     )
 
     meta = db.execute(
-        "SELECT version, version_year, version_month FROM t.metadata"
+        "SELECT version, version_year, version_month, taxonomy_version FROM t.metadata"
     ).fetchone()
     db.execute(
-        "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             meta[0],
             meta[1],
             meta[2],
+            meta[3],
             datetime.now(timezone.utc).isoformat(),
             json.dumps(FREQUENCY_BUCKETS),
             LOC_MIN_SCORE,

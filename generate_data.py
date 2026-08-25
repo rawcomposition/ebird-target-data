@@ -106,6 +106,16 @@ def open_sqlite_build_connection(
     return sqlite_con
 
 
+def fetch_taxonomy_version() -> str:
+    """Fetch the current eBird taxonomy authority version (e.g. "2025.0")."""
+    url = "https://api.ebird.org/v2/ref/taxonomy/versions?fmt=json"
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    versions = response.json()
+    latest = next(v for v in versions if v.get("latest"))
+    return str(latest["authorityVer"])
+
+
 def download_taxonomy(sqlite_con: sqlite3.Connection) -> int:
     """
     Download eBird taxonomy and insert into species table.
@@ -215,7 +225,8 @@ def build_database(
     )
     taxonomy_count = download_taxonomy(sqlite_con)
     sqlite_con.close()
-    print(f"  Downloaded {taxonomy_count:,} species ({format_duration(time.time() - step_start)})")
+    taxonomy_version = fetch_taxonomy_version()
+    print(f"  Downloaded {taxonomy_count:,} species (taxonomy {taxonomy_version}, {format_duration(time.time() - step_start)})")
 
     # Create the final tables up front so DuckDB can insert rows in primary-key
     # order directly into the compact WITHOUT ROWID layout.
@@ -646,15 +657,17 @@ def build_database(
             version TEXT NOT NULL,
             version_year TEXT NOT NULL,
             version_month TEXT NOT NULL,
+            taxonomy_version TEXT NOT NULL,
             generated_at TEXT NOT NULL
         )
     """)
     sqlite_con.execute(
-        "INSERT INTO metadata (version, version_year, version_month, generated_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO metadata (version, version_year, version_month, taxonomy_version, generated_at) VALUES (?, ?, ?, ?, ?)",
         (
             version,
             version_year,
             version_month,
+            taxonomy_version,
             datetime.now(timezone.utc).isoformat(),
         ),
     )
