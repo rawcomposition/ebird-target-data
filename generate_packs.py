@@ -22,7 +22,6 @@ from typing import Optional
 import requests
 
 from utils import format_duration, format_size, load_env_file
-from hotspot_sync import create_hotspot_sync
 
 # Get script directory for relative paths
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -243,6 +242,58 @@ def fetch_hotspots_for_region(region: str, api_key: str) -> list[EBirdHotspot]:
     return hotspots
 
 
+HOTSPOT_UPSERT_SQL = """
+    INSERT INTO hotspots (
+        id, name, country_code, subnational1_code, subnational2_code,
+        region_code, lat, lng, num_species, num_checklists
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT (id) DO UPDATE SET
+        name = excluded.name,
+        country_code = excluded.country_code,
+        subnational1_code = excluded.subnational1_code,
+        subnational2_code = excluded.subnational2_code,
+        region_code = excluded.region_code,
+        lat = excluded.lat,
+        lng = excluded.lng,
+        num_species = excluded.num_species,
+        num_checklists = excluded.num_checklists
+"""
+
+
+def upsert_hotspots(db_path: Path, ebird_hotspots: list[EBirdHotspot]) -> int:
+    """Upsert eBird API hotspots into the targets db `hotspots` table.
+
+    Mirrors the region_code derivation in generate_data.py: county, else a
+    real subnational1 code (e.g. US-CA, not a bare country), else country.
+    """
+    rows = []
+    for h in ebird_hotspots:
+        country = h.country_code or None
+        sub1 = h.subnational1_code or None
+        if sub1 and len(sub1) <= len(sub1.split('-', 1)[0]) + 1:
+            sub1 = None
+        sub2 = h.subnational2_code or None
+        rows.append((
+            h.location_id, h.name, country, sub1, sub2,
+            sub2 or sub1 or country, h.lat, h.lng, h.total, h.num_checklists,
+        ))
+
+    conn = sqlite3.connect(db_path)
+    try:
+        with conn:
+            # Older targets dbs predate these columns; add them in place.
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(hotspots)")}
+            for col in ("num_species", "num_checklists"):
+                if col not in existing:
+                    conn.execute(f"ALTER TABLE hotspots ADD COLUMN {col} INTEGER")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_lat_lng ON hotspots(lat, lng)")
+            conn.executemany(HOTSPOT_UPSERT_SQL, rows)
+    finally:
+        conn.close()
+    return len(rows)
+
+
 def build_month_obs_map(rows: list[tuple]) -> dict:
     """Build month observations data structure from database rows."""
     obs_by_location = {}
@@ -441,7 +492,6 @@ def generate_pack(
     base_url: str,
     is_first_pack: bool,
     progress: str = "",
-    hotspot_sync=None
 ) -> Optional[PackMetadata]:
     """Generate a pack for a single region."""
     prefix = f"[{progress}] " if progress else ""
@@ -460,13 +510,8 @@ def generate_pack(
         print("  Skipping - no hotspots")
         return None
 
-    if hotspot_sync:
-        try:
-            synced, deleted = hotspot_sync.sync_region(pack.region, ebird_hotspots)
-            deleted_note = f", {deleted} soft-deleted" if deleted else ""
-            print(f"  Synced {synced} hotspots to database{deleted_note}")
-        except Exception as e:
-            print(f"  Warning: hotspot sync failed for {pack.region}: {e}")
+    synced = upsert_hotspots(db_path, ebird_hotspots)
+    print(f"  Upserted {synced} hotspots into targets db")
 
     # Query month_obs from a read-only connection.
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -635,14 +680,6 @@ def main():
         print(f"Warning: Could not fetch region names: {e}")
         region_names = {}
 
-    hotspot_sync = None
-    try:
-        hotspot_sync = create_hotspot_sync(env_vars)
-    except Exception as e:
-        print(f"Warning: hotspot sync disabled: {e}")
-    if hotspot_sync:
-        print("Hotspot sync enabled (DATABASE_URL configured)")
-
     start_time = time.time()
     pack_metadata_list = []
 
@@ -663,18 +700,12 @@ def main():
             metadata = generate_pack(
                 pack, args.db_path, output_dir, species_by_id, region_names,
                 api_key, pack_version, base_url, i == 0, f"{i + 1}/{total_packs}",
-                hotspot_sync
             )
             if metadata:
                 pack_metadata_list.append(metadata)
         except Exception as e:
             print(f"\nError processing pack {pack.region}: {e}")
-            if hotspot_sync:
-                hotspot_sync.close()
             sys.exit(1)
-
-    if hotspot_sync:
-        hotspot_sync.close()
 
     # Generate packs.json.gz index file
     if pack_metadata_list:

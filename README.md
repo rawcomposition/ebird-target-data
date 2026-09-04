@@ -70,7 +70,9 @@ The CLI will prompt you to:
      targets db: species-occurrence frequencies per hotspot and per H3 cell
      (res 3-4, rolled up from the res-6 h3 tables), plus a typed-array blob
      cache. Powers the web app's "Best Hotspots" tool.
-   - **Generate Packs** - Generate compressed JSON packs for each region
+   - **Generate Packs** - Generate compressed JSON packs for each region. Also
+     upserts the full eBird API hotspot list (with all-time species and
+     checklist counts) into the targets db `hotspots` table
    - **All (without upload)** - Run all steps except upload
    - **Upload Packs** - Upload packs to S3-compatible storage
    - **Upload SQLite** - Upload the targets and occurrences databases to the
@@ -119,7 +121,9 @@ CREATE TABLE hotspots (
     subnational2_code TEXT,
     region_code TEXT,
     lat REAL,
-    lng REAL
+    lng REAL,
+    num_species INTEGER,       -- eBird all-time counts, filled in by Generate Packs
+    num_checklists INTEGER
 );
 
 CREATE TABLE regions (
@@ -176,6 +180,7 @@ CREATE INDEX idx_hotspots_country ON hotspots(country_code);
 CREATE INDEX idx_hotspots_subnational1 ON hotspots(subnational1_code);
 CREATE INDEX idx_hotspots_subnational2 ON hotspots(subnational2_code);
 CREATE INDEX idx_hotspots_region ON hotspots(region_code);
+CREATE INDEX idx_hotspots_lat_lng ON hotspots(lat, lng);
 ```
 
 ### H3 grid tables

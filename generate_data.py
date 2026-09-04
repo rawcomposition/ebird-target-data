@@ -571,11 +571,15 @@ def build_database(
             subnational2_code TEXT,
             region_code TEXT,
             lat REAL,
-            lng REAL
+            lng REAL,
+            num_species INTEGER,
+            num_checklists INTEGER
         )
     """)
 
-    # Extract unique hotspot locations from location metadata.
+    # Extract unique hotspot locations from location metadata. Only hotspots
+    # with at least one complete checklist appear here; Generate Packs later
+    # upserts the full eBird API hotspot list (with all-time counts).
     con.execute("""
         INSERT INTO sqlite_db.hotspots (id, name, country_code, subnational1_code, subnational2_code, region_code, lat, lng)
         SELECT
@@ -611,6 +615,7 @@ def build_database(
         "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational1 ON hotspots(subnational1_code)",
         "CREATE INDEX IF NOT EXISTS idx_hotspots_subnational2 ON hotspots(subnational2_code)",
         "CREATE INDEX IF NOT EXISTS idx_hotspots_region ON hotspots(region_code)",
+        "CREATE INDEX IF NOT EXISTS idx_hotspots_lat_lng ON hotspots(lat, lng)",
         # Note: location-based queries for month_obs are covered by the PRIMARY KEY and WITHOUT ROWID optimizations
     ]
 
