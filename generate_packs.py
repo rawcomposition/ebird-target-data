@@ -282,11 +282,6 @@ def upsert_hotspots(db_path: Path, ebird_hotspots: list[EBirdHotspot]) -> int:
     conn = sqlite3.connect(db_path)
     try:
         with conn:
-            # Older targets dbs predate these columns; add them in place.
-            existing = {r[1] for r in conn.execute("PRAGMA table_info(hotspots)")}
-            for col in ("num_species", "num_checklists"):
-                if col not in existing:
-                    conn.execute(f"ALTER TABLE hotspots ADD COLUMN {col} INTEGER")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_hotspots_lat_lng ON hotspots(lat, lng)")
             conn.executemany(HOTSPOT_UPSERT_SQL, rows)
     finally:
